@@ -1,0 +1,579 @@
+/**
+ * submitter.js — CDP-Only Master Build
+ * Connects to an already-running stealth Opera browser on port 9222.
+ * Features: Aggressive Zero-Finder, Elastic Trimming, Smart Ambiguity.
+ */
+
+'use strict';
+
+const { chromium } = require('playwright'); // Standard playwright is fine via CDP
+const fs = require('fs');
+const path = require('path');
+const stringSimilarity = require('string-similarity');
+
+// ─── 0. LOGGING SETUP ────────────────────────────────────────────────────────
+const logDir = path.join(__dirname, 'logs');
+if (!fs.existsSync(logDir)) fs.mkdirSync(logDir);
+
+const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+const humanLogFile = path.join(logDir, `session_${timestamp}_human.log`);
+const machineLogFile = path.join(logDir, `session_${timestamp}_machine.jsonl`);
+
+function log(msg, data = null) {
+  const time = new Date().toLocaleTimeString();
+  const line = `[${time}] ${msg}`;
+  
+  // 1. Terminal + Human Log
+  console.log(line);
+  try {
+    fs.appendFileSync(humanLogFile, line + '\n', 'utf8');
+  } catch (err) {}
+
+  // 2. Machine Log (JSONL)
+  if (data) {
+    try {
+      const entry = JSON.stringify({
+        timestamp: new Date().toISOString(),
+        ...data
+      });
+      fs.appendFileSync(machineLogFile, entry + '\n', 'utf8');
+    } catch (err) {}
+  }
+}
+
+// ─── 1. CONFIG ────────────────────────────────────────────────────────────────
+const CONFIG = {
+  // 👇 CHANGE THIS NUMBER WHEN YOUR PROJECT UPDATES 👇
+  PROJECT_ID: '37727', 
+  get PROJECT_URL() { return `https://scale.dingtalk.com/projects/${this.PROJECT_ID}/data`; },
+
+  CDP_URL: 'http://127.0.0.1:9222',
+
+  HIGH_CONFIDENCE: 0.40,
+  LOW_CONFIDENCE: 0.24,
+  AMBIGUITY_GAP: 0.04,
+  WORDS_PER_SECOND: 1.55,
+  LENGTH_TOLERANCE: 2.2,
+  POLL_INTERVAL_MS: 1500,
+  BEEP: '\u0007'
+};
+
+const sleep = (min, max = min) => new Promise(r => setTimeout(r, Math.floor(Math.random() * (max - min + 1)) + min));
+
+/**
+ * Simulates a human scrolling behavior by breaking large scrolls into smaller increments
+ */
+async function smoothScroll(page, selector, pixels) {
+  await page.evaluate(async ({ selector, pixels }) => {
+    const el = document.querySelector(selector);
+    if (!el) return;
+    const direction = pixels > 0 ? 1 : -1;
+    let remaining = Math.abs(pixels);
+    while (remaining > 0) {
+      const step = Math.min(remaining, Math.floor(Math.random() * 50) + 50);
+      el.scrollTop += step * direction;
+      remaining -= step;
+      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 20) + 15));
+    }
+  }, { selector, pixels });
+}
+
+/**
+ * Checks if a specific scrollable element has reached the absolute bottom.
+ */
+async function isScrollerAtBottom(page, selector) {
+  return await page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return true;
+    // Allow for a small 5px buffer for sub-pixel rendering
+    return (el.scrollTop + el.clientHeight) >= (el.scrollHeight - 5);
+  }, selector);
+}
+
+/**
+ * Scrolls the table back to the absolute top.
+ */
+async function scrollToTop(page, selector) {
+  await page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (el) el.scrollTop = 0;
+  }, selector);
+}
+
+// ─── 1. LOAD & CHUNK SCRIPTS.TXT ──────────────────────────────────────────────
+let cleanChunks = [];
+let currentProjectID = null;
+
+function loadScripts(projID) {
+  let targetPath = path.join(__dirname, `scripts_${projID}.txt`);
+  if (!fs.existsSync(targetPath)) {
+    targetPath = path.join(__dirname, 'scripts.txt');
+    log(`   ⚠️ scripts_${projID}.txt not found. Falling back to default scripts.txt`);
+  } else {
+    log(`\n   📂 Loaded dataset target: scripts_${projID}.txt`);
+  }
+  
+  if (!fs.existsSync(targetPath)) return;
+  
+  const raw = fs.readFileSync(targetPath, 'utf8');
+  const sentences = raw.replace(/\r\n/g, '\n').replace(/\n+/g, ' ')
+    .split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(s => s.length > 15);
+
+  cleanChunks = [];
+  for (let i = 0; i < sentences.length; i++) {
+    for (let len = 1; len <= 5 && i + len <= sentences.length; len++) {
+      cleanChunks.push(sentences.slice(i, i + len).join(' '));
+    }
+  }
+  log(`   └─ Parsed ${sentences.length} sentences → ${cleanChunks.length} window chunks`);
+}
+
+/**
+ * Extracts the Absolute Truth of a Task ID from the Browser URL or the UI Header.
+ */
+async function getVerifiedTaskID(page) {
+  // 1. Try URL (?task=xxxxx)
+  const url = page.url();
+  const match = url.match(/[?&]task=(\d+)/);
+  if (match) return match[1];
+
+  // 2. Try UI Element (.lsf-current-task__task-id)
+  try {
+    const uiID = await page.locator('.lsf-current-task__task-id').innerText({ timeout: 2000 });
+    if (uiID && uiID.trim()) return uiID.trim().replace('#', '').trim();
+  } catch (e) {
+    // Fallback if UI is slow
+  }
+  return null;
+}
+
+// ─── 2. TEXT NORMALISATION ────────────────────────────────────────────────────
+function normalize(text) {
+  let norm = text.toLowerCase()
+    .replace(/-/g, ' ').replace(/%/g, ' peratus')
+    .replace(/[^\w\s]/gi, '').replace(/\s+/g, ' ').trim();
+
+  const magMap = {
+    'bilion': '000000000', 'juta': '000000', 'ribu': '000', 
+    'ratus': '00', 'puluh': '0', 'sebelas': '11', 'sepuluh': '10',
+    'sifar': '0', 'kosong': '0', 'setengah': '0.5'
+  };
+
+  Object.keys(magMap).forEach(word => {
+    norm = norm.replace(new RegExp(`\\b${word}\\b`, 'g'), magMap[word]);
+  });
+  return norm;
+}
+
+// ─── 3. DURATION & SANITY HELPERS ────────────────────────────────────────────
+function parseDuration(val) {
+  if (!val) return null;
+  const p = val.split(':').map(Number);
+  if (p.length === 4) return (p[0] * 3600) + (p[1] * 60) + p[2] + (p[3] / 1000);
+  if (p.length === 3) return (p[0] * 60) + p[1] + (p[2] / 1000);
+  if (p.length === 2) return p[0] + (p[1] / 1000);
+  return null;
+}
+
+function expectedWords(sec) { return Math.round(sec * CONFIG.WORDS_PER_SECOND); }
+function wordCount(text) { return text.trim().split(/\s+/).length; }
+
+function sanityCheck(text, sec) {
+  if (!sec) return { ok: true };
+  const exp = expectedWords(sec), act = wordCount(text), ratio = act / exp;
+  if (ratio < 0.35 || ratio > 2.8)
+    return { ok: false, reason: `Word count mismatch: ${act} pasted, ~${exp} expected for ${sec.toFixed(1)}s` };
+  return { ok: true };
+}
+
+// ─── 4. FINGERPRINT SCORER & BEST MATCH ──────────────────────────────────────
+const FILLER = new Set(['yang','dan','dia','ini','itu','akan','untuk','dengan','dari','pada','oleh','ke','di','ia','si','tu','ni','juga','atau','pun','saja','sahaja','lagi','sudah','telah','sedang','boleh','tidak','tak','ada','satu','kami','kita','anda','saya','mereka','kamu']);
+
+function scoreChunk(messy, chunk) {
+  const nm = normalize(messy), nc = normalize(chunk);
+  const mArr = nm.split(/\s+/);
+  const kw = [...new Set(mArr.filter(w => (w.length > 3 || !isNaN(w)) && !FILLER.has(w)))];
+
+  const overlap = kw.length ? kw.filter(w => nc.includes(w)).length / kw.length : 0;
+  const sim = stringSimilarity.compareTwoStrings(nm, nc);
+
+  let tri = 0, bi = 0;
+  for (let i = 0; i < mArr.length - 2; i++) if (nc.includes(mArr.slice(i, i + 3).join(' '))) tri += 0.10;
+  for (let i = 0; i < mArr.length - 1; i++) if (nc.includes(mArr.slice(i, i + 2).join(' '))) bi += 0.03;
+
+  let anchor = 0;
+  if (mArr.length >= 4) {
+    if (nc.includes(mArr.slice(0, 3).join(' ')) || nc.includes(mArr.slice(1, 4).join(' '))) anchor += 0.12;
+    if (nc.includes(mArr.slice(-3).join(' ')) || nc.includes(mArr.slice(-4, -1).join(' '))) anchor += 0.12;
+  } else if (mArr.length === 3) {
+    if (nc.includes(mArr.join(' '))) anchor += 0.24; 
+  }
+
+  return overlap * 0.22 + sim * 0.13 + Math.min(tri, 0.40) * 0.38 + Math.min(bi, 0.15) * 0.10 + anchor * 0.17;
+}
+
+function bestMatch(snippet, durationSec) {
+  let best = 0, second = 0, bestChunk = '', secondChunk = '';
+  for (const chunk of cleanChunks) {
+    if (durationSec && wordCount(chunk) < expectedWords(durationSec) * 0.40) continue; 
+    let s = scoreChunk(snippet, chunk);
+    if (s > best) { second = best; secondChunk = bestChunk; best = s; bestChunk = chunk; }
+    else if (s > second) { second = s; secondChunk = chunk; }
+  }
+  return { best, second, gap: best - second, chunk: bestChunk, secondChunk };
+}
+
+// ─── 5. ELASTIC TRIMMER ──────────────────────────────────────────────────────
+function trimToSnippetLength(snippetText, matchedChunk) {
+  const snippetWords = snippetText.trim().split(/\s+/), chunkWords = matchedChunk.trim().split(/\s+/);
+  if (chunkWords.length <= Math.ceil(snippetWords.length * 1.1)) return matchedChunk;
+
+  const normSnippet = normalize(snippetText), snippetArr = normSnippet.split(/\s+/);
+  const minLen = Math.max(1, Math.floor(snippetWords.length * 0.75));
+  const maxLen = Math.min(chunkWords.length, Math.ceil(snippetWords.length * 1.35));
+
+  let bestScore = -1, bestSeg = matchedChunk;
+  for (let size = minLen; size <= maxLen; size++) {
+    for (let i = 0; i <= chunkWords.length - size; i++) {
+      const windowText = chunkWords.slice(i, i + size).join(' '), normWin = normalize(windowText);
+      let s = stringSimilarity.compareTwoStrings(normSnippet, normWin);
+      let tri = 0;
+      for (let j = 0; j < snippetArr.length - 2; j++) {
+        if (normWin.includes(snippetArr.slice(j, j + 3).join(' '))) tri += 0.05;
+      }
+      if (s + Math.min(tri, 0.20) > bestScore) { bestScore = s + Math.min(tri, 0.20); bestSeg = windowText; }
+    }
+  }
+  return bestSeg;
+}
+
+// ─── 6. ROBUST DOM UI HELPERS ────────────────────────────────────────────────
+const TEXTAREA_SEL = 'textarea[name="Annotation Result"]';
+
+async function pauseForReview(reason) {
+  process.stdout.write(CONFIG.BEEP);
+  log(`\n🚨 PAUSED — ${reason}\n   Press ENTER to skip and continue…`);
+  return new Promise(resolve => process.stdin.once('data', resolve));
+}
+
+async function readTextarea(page) {
+  try {
+    await page.locator(TEXTAREA_SEL).first().waitFor({ state: 'visible', timeout: 5000 });
+    const v = await page.locator(TEXTAREA_SEL).first().inputValue().catch(() => '');
+    if (v) return v.trim();
+    return (await page.locator(TEXTAREA_SEL).first().textContent().catch(() => '')).trim();
+  } catch { return ''; }
+}
+
+async function pasteText(page, text) {
+  const box = page.locator(TEXTAREA_SEL).first();
+  await box.focus();
+  
+  // Use locator.press (isolated) instead of page.keyboard (global)
+  await box.press('Control+A'); await sleep(80, 150);
+  await box.press('Backspace'); 
+  
+  // "Thinking pause" between clearing and pasting
+  await sleep(600, 1200); 
+  
+  await box.fill(text.trim());            await sleep(100, 150);
+  await box.press('Space');               await sleep(60, 100);
+  await box.press('Backspace');
+}
+
+async function safeSubmit(page) {
+  const submitBtn = page.locator('button[aria-label*="submit" i], button:has-text("Submit"), button:has-text("Save")').first();
+  await submitBtn.click();
+  await sleep(500, 800);
+  try { 
+    const dialogBtn = page.locator('[data-testid*="ok" i], [data-testid*="confirm" i], button:has-text("Ignore"), button:has-text("OK")').first(); 
+    await dialogBtn.waitFor({state:'visible', timeout: 1500}); 
+    await dialogBtn.click(); 
+  } catch {}
+}
+
+async function safeGoBack(page) {
+  try {
+    await page.goBack({ timeout: 5000 });
+    await sleep(400, 700);
+  } catch {
+    const m = page.url().match(/\/projects\/(\d+)/);
+    if (m) await page.goto(`https://scale.dingtalk.com/projects/${m[1]}/data`, { timeout: 8000 });
+  }
+}
+
+// ─── 7. MAIN LAUNCH & LOOP ───────────────────────────────────────────────────
+(async () => {
+  console.log(`🔌 Connecting to Opera on ${CONFIG.CDP_URL}...`);
+  
+  let browser;
+  try {
+    browser = await chromium.connectOverCDP(CONFIG.CDP_URL);
+  } catch (e) {
+    console.error(`❌ Connection failed. Make sure your Opera launcher is running on port 9222.`);
+    process.exit(1);
+  }
+
+  const context = browser.contexts()[0];
+  
+  // Find the DingTalk tab, or fallback to the first tab
+  let page = context.pages().find(p => p.url().includes('scale.dingtalk.com/projects'));
+  
+  if (!page) {
+    log("❌ DingTalk tab not found. Please open the DingTalk URL in your browser first!");
+    process.exit(1);
+  } else {
+    log(`✅ Attached to DingTalk tab: ${page.url()}`);
+    // If we landed on the projects LIST page (not a task /data page), navigate there now
+    if (!page.url().includes('/data')) {
+      log(`   🚀 Not on a data page. Navigating to project ${CONFIG.PROJECT_ID}...`);
+      await page.goto(CONFIG.PROJECT_URL, { timeout: 15000, waitUntil: 'domcontentloaded' });
+      await sleep(2000);
+      log(`   ✅ Now on: ${page.url()}`);
+    }
+  }
+
+  if (process.stdin.isTTY) { require('readline').emitKeypressEvents(process.stdin); process.stdin.setRawMode(false); }
+  
+  log("\n━━━ BOT ACTIVE ━━━\n");
+  log(`📄 Logging (Human): ${humanLogFile}`);
+  log(`📄 Logging (Machine): ${machineLogFile}\n`);
+  let lastTaskID = '';
+  const skippedTaskIDs = new Set(); // Permanent memory of all Update-skipped tasks
+  
+  let isVerifying = false; // "Sweep & Verify" state
+  const sessionStats = {
+    startTime: Date.now(),
+    processed: 0,
+    skipped: 0,
+    mismatches: 0
+  };
+
+  const TABLE_SCROLLER = '.lsf-table [style*="overflow: auto"]';
+
+  while (true) {
+    try {
+      const urlMatch = page.url().match(/projects\/(\d+)/);
+      const projID = urlMatch ? urlMatch[1] : "unknown";
+      if (projID !== currentProjectID) {
+          loadScripts(projID);
+          currentProjectID = projID;
+      }
+      await sleep(CONFIG.POLL_INTERVAL_MS);
+      const rows = await page.locator('.lsf-table-row').all();
+      let processed = false;
+
+      for (const row of rows) {
+        const cells = await row.locator('.lsf-table__cell').all();
+        if (cells.length < 2) continue;
+
+        // --- ZERO-FINDER (Adopted from jump_first.js) ---
+        const col1 = (await cells[1].innerText().catch(() => '')).trim();
+        const col2 = cells.length > 2 ? (await cells[2].innerText().catch(() => '')).trim() : '';
+        
+        // Exact locator from jump_first.js for the 10th column count
+        let col10 = '';
+        if (cells.length > 5) {
+          const countCell = row.locator('div:nth-child(10) > div');
+          if (await countCell.isVisible().catch(() => false)) {
+            col10 = (await countCell.innerText().catch(() => '')).trim();
+          }
+        }
+
+        const isZeroRow = col1 === '0' || col2 === '0' || col10 === '0';
+        if (!isZeroRow) continue;
+
+
+        // Get Task ID
+        const checkbox = row.locator('.lsf-select-row input, input[aria-label^="Select Task"]').first();
+        const ariaLabel = await checkbox.getAttribute('aria-label').catch(() => '');
+        let taskID = ariaLabel ? ariaLabel.replace('Select Task ', '').trim() : 'Unknown';
+
+        if (taskID !== lastTaskID && !skippedTaskIDs.has(taskID)) {
+          log(`\n🎯 Task ${taskID} found. [col1='${col1}' col2='${col2}' col10='${col10}']`, {
+            event: "task_discovered",
+            taskID,
+            col1,
+            col2,
+            col10
+          });
+
+          // --- "PRE-AIM" HUMANIZATION (Hover + Reaction Time) ---
+          await cells[1].hover({ force: true }).catch(() => {});
+          await sleep(200, 550); // Aiming/thinking time
+
+          // --- INTERACTION (Direct dblclick, NO internal delay, guaranteed to trigger UI) ---
+          if (col1 === '0') await cells[1].dblclick({ force: true });
+          else if (col2 === '0') await cells[2].dblclick({ force: true });
+          else await row.dblclick({ force: true });
+
+          await page.evaluate(() => window.getSelection().removeAllRanges()).catch(() => {});
+          lastTaskID = taskID;
+            
+          // --- LOADING (Adopted from test_duration.js) ---
+          log("   ⏳ Waiting for Wrapper & Waveform UI to load...");
+          await page.waitForSelector('#waveform-layer-main', { timeout: 15000 }).catch(() => {});
+          
+          // --- VERIFY ID (The "Absolute Truth" fix) ---
+          const verifiedID = await getVerifiedTaskID(page);
+          if (verifiedID && verifiedID !== taskID) {
+            log(`   ⚠️ ID MISMATCH! Table said ${taskID}, but UI/URL confirms ${verifiedID}. Correcting...`, {
+              event: "id_mismatch",
+              oldID: taskID,
+              newID: verifiedID
+            });
+            taskID = verifiedID; // Update to the real ID
+            sessionStats.mismatches++;
+          }
+          lastTaskID = taskID;
+
+          log("   ⏳ Polling audio duration metadata...");
+          const durationInput = page.locator('[data-testid="timebox-end-time"] input').first();
+          let rawDur = "";
+          for (let i = 0; i < 40; i++) {
+            rawDur = await durationInput.inputValue().catch(e => "");
+            if (rawDur && rawDur.length >= 5 && rawDur !== "00:00:00" && rawDur !== "00:00:00:000") break;
+            process.stdout.write("."); 
+            await sleep(500);
+          }
+          log(""); // newline after dots
+          
+          // --- CLICK WAVEFORM (Natively, aligned with test_click.js) ---
+          log(`   🖱️ Audio duration confirmed [${rawDur.trim()}]. Clicking waveform...`);
+          await page.click('#waveform-layer-main').catch(() => {});
+          await sleep(1000, 1500);
+
+          // Check for Update button
+          if (await page.locator('button:has-text("Update")').isVisible().catch(()=>false)) {
+              log("   ⏭️ Wrapper shows 'Update'! Task already done. Skipping.", {
+                event: "skipped_completed",
+                taskID
+              });
+              skippedTaskIDs.add(taskID);
+              sessionStats.skipped++;
+              await page.keyboard.press('Escape').catch(()=>{});
+              await sleep(1000);
+              processed = true; break;
+          }
+
+            // 4. Parse the extracted Duration & Text
+            let clipDur = parseDuration(rawDur);
+            const snippet = await readTextarea(page);
+
+            if (!snippet || snippet.length < 5) {
+              log(`   ⚠ Textarea empty. Skipping.`);
+              await safeGoBack(page); processed = true; break;
+            }
+
+            log(`   📋 FULL SNIPPET EXTRACTED:\n--------------------------------------------------\n${snippet}\n--------------------------------------------------`);
+
+            // 3. MATCH AND TRIM
+            const { best, second, gap, chunk, secondChunk } = bestMatch(snippet, clipDur);
+            log(`   📊 Score: ${best.toFixed(3)} | Gap: ${gap.toFixed(3)}`, {
+              event: "match_calculation",
+              taskID,
+              bestScore: best,
+              gap
+            });
+
+            let isAmbiguous = false;
+            if (best > CONFIG.LOW_CONFIDENCE && gap < CONFIG.AMBIGUITY_GAP) {
+              if (stringSimilarity.compareTwoStrings(normalize(chunk), normalize(secondChunk)) > 0.40) {
+                log(`   💡 Ambiguity ignored (Overlapping sentences).`);
+              } else {
+                log(`   🚨 AMBIGUOUS. Pausing.`);
+                isAmbiguous = true;
+                await pauseForReview(`Press Enter to skip.`);
+                await safeGoBack(page); processed = true; break;
+              }
+            }
+
+            // 4. PASTE CORRECTLY
+            if (!isAmbiguous && best >= CONFIG.LOW_CONFIDENCE) {
+              let finalPastedText = snippet;
+              let mode = "low-confidence fallback";
+
+              if (best >= CONFIG.HIGH_CONFIDENCE) {
+                finalPastedText = trimToSnippetLength(snippet, chunk);
+                mode = "high-confidence (trimmed)";
+              }
+
+              const sanity = sanityCheck(finalPastedText, clipDur);
+              if (!sanity.ok) {
+                  log(`   🚨 Sanity Check Failed: ${sanity.reason}`);
+                  await pauseForReview(`Press Enter to skip.`);
+                  await safeGoBack(page); processed = true; break;
+              }
+
+              log(`   📝 CONFIRMING PASTE CONTENT:\n--------------------------------------------------\n${finalPastedText}\n--------------------------------------------------`);
+              await pasteText(page, finalPastedText);
+              
+              // Humanize: Add random 'lost focus' staring delay
+              const staringJitter = Math.floor(Math.random() * 4000) + 1500;
+              const reviewTime = Math.max(3000, wordCount(finalPastedText) * 200) + staringJitter;
+              log(`   🤔 Added Human Staring Jitter: +${(staringJitter/1000).toFixed(1)}s`);
+              log(`   ⏳ Review pause: ${(reviewTime/1000).toFixed(1)}s...`);
+              await sleep(reviewTime, reviewTime + 1000);
+
+              log('   ⏳ WAITING 3 SECONDS... PRESS CTRL+C NOW TO CANCEL IF WRONG!');
+              await sleep(3000);
+              log('   🖱 Submitting...');
+              await safeSubmit(page);
+              log('   ✅ Submitted.', {
+                event: "submission_success",
+                taskID,
+                text: finalPastedText
+              });
+              sessionStats.processed++;
+              await sleep(2000, 3000);
+              processed = true; 
+              isVerifying = false; // Reset verification if we found something
+              break;
+            } else if (!isAmbiguous) {
+              log("   ⚠️ Score too low. Skipping.");
+              await safeGoBack(page); processed = true; break;
+            }
+          }
+      }
+
+      // --- COMPLETION DETECTION ('Sweep & Verify' logic) ---
+      if (!processed) {
+        const atBottom = await isScrollerAtBottom(page, TABLE_SCROLLER);
+
+        if (atBottom) {
+          if (!isVerifying) {
+            log("\n🔍 REACHED BOTTOM. Performing one final 'Sweep & Verify' from top...");
+            await scrollToTop(page, TABLE_SCROLLER);
+            await sleep(2000);
+            isVerifying = true; // Enter verification mode
+          } else {
+            // We were ALREADY verifying and reached the bottom again = TRULY DONE!
+            process.stdout.write(CONFIG.BEEP);
+            const durationMin = ((Date.now() - sessionStats.startTime) / 60000).toFixed(1);
+            
+            log(`\n━━━━━━━━━━━━━━━━━━━━ SESSION COMPLETE ━━━━━━━━━━━━━━━━━━━━`);
+            log(`🏁 No more tasks found after a full sweep.`);
+            log(`📊 Successes:  ${sessionStats.processed}`);
+            log(`⏭️  Skipped:    ${sessionStats.skipped}`);
+            log(`⚠️  Mismatches: ${sessionStats.mismatches}`);
+            log(`⏳ Duration:   ${durationMin} minutes`);
+            log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`, {
+              event: "session_summary",
+              ...sessionStats,
+              durationMin
+            });
+
+            process.exit(0);
+          }
+        } else {
+          // Not at bottom yet, keep scrolling down
+          await smoothScroll(page, TABLE_SCROLLER, 800);
+          await sleep(600, 900);
+        }
+      }
+    } catch (e) {
+      log(`   ❌ Loop error: ${e.message}`);
+      await sleep(2000);
+    }
+  }
+})();

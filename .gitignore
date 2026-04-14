@@ -1,0 +1,19 @@
+# Libraries (Huge)
+node_modules/
+package-lock.json
+playwright-report/
+test-results/
+
+# Personal Browser Data (Sensitive & Big)
+chrome_user_data/
+user_data/
+stealth_data/
+opera_debug_profile/
+
+# Session Logs & Artifacts
+logs/
+session_*.log
+
+# System files
+.DS_Store
+Thumbs.db
