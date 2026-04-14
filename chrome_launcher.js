@@ -8,7 +8,7 @@ chromium.use(stealth);
   
   // This uses a local folder on your computer to save session data,
   // preventing you from needing to log in repeatedly.
-  const context = await chromium.launchPersistentContext('C:\\DingTalk\\chrome_user_data', {
+  const context = await chromium.launchPersistentContext('./chrome_user_data', {
     channel: 'chrome', // This instructs Playwright to use your system's Google Chrome natively
     headless: false,
     viewport: null,

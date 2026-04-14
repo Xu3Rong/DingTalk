@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const dir = 'c:\\DingTalk';
+const dir = __dirname;
 const files = fs.readdirSync(dir).filter(f => 
     f.endsWith('.js') && 
     f !== 'fixer.js' && 
