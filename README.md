@@ -67,9 +67,9 @@ PROJECT_ID: '37727', // Change this to your new Project ID
 
 ### 2. Multi-Dataset Support (The Dataset Guide)
 The bot intelligently selects your text data:
-*   If `scripts_37727.txt` exists, it will use that specific dataset.
+*   If `scripts_37727.txt` exists, it will use that specific dataset. This is for daily script, for each project id that recorded, so manually create a new script with the naming format accordingly.
 *   Otherwise, it falls back to the default `scripts.txt`.
-*   **Format Tip**: Your `scripts.txt` should be a plain list of sentences. The bot will automatically "chunk" them to find the best match for each task. No special formatting is needed!
+*   **Format Tip**: Your `scripts.txt` should be a plain list of sentences. One essay in a chunk, with line break without space in between paragraphs, space between essays, clean my available script inside first.
 
 ### 3. Changing the CDP Port
 If port **9222** is in use, change it in **both** files:
