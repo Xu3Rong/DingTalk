@@ -70,23 +70,79 @@ The bot intelligently selects your text data:
 *   If `scripts_37727.txt` exists, it will use that specific dataset. This is for daily script, for each project id that recorded, so manually create a new script with the naming format accordingly.
 *   Otherwise, it falls back to the default `scripts.txt`.
 *   **Format Tip**: Your `scripts.txt` should be a plain list of sentences. One essay in a chunk, with line break without space in between paragraphs, space between essays, clean my available script inside first.
+*   *   **Recommendation**: Create separate files for different projects to avoid confusion.
+ 
+### 3. Tabs & Multitasking (New & Improved!)
+**Can I use other tabs while the bot runs?**
+*   **Yes!** The bot now uses **isolated input events**. This means it sends keystrokes directly to the DingTalk text box without affecting your global keyboard.
+*   **Multitasking**: You can now safely type emails, chat on Discord, or work in other tabs while the bot is running. The bot's typing will not be interrupted by your typing.
+*   **The only rule**: Do not manually click or type *inside* the specific DingTalk tab that the bot is using, or you might confuse its current task.
 
-### 3. Changing the CDP Port
+### 4. Changing the CDP Port
 If port **9222** is in use, change it in **both** files:
 *   **`chrome_launcher.js`**: Line 18 (`--remote-debugging-port=9222`).
 *   **`ok.js`**: Line 50 (`CDP_URL: 'http://127.0.0.1:9222'`).
 
 ---
+## 🛠 Advanced: Changing the Port
+If the bot says "Connection Failed," it usually means Port **9222** is currently in use by another app. To change it:
+
+### 1. Update the Launcher
+Open **`chrome_launcher.js`** and look at **Line 18**:
+```javascript
+'--remote-debugging-port=9222', // Change 9222 to 9223
+```
+
+### 2. Update the Bot
+Open **`ok.js`** and look at **Line 20**:
+```javascript
+CDP_URL: 'http://127.0.0.1:9222', // Change 9222 to 9223
+```
+*Note: The numbers in both files must match!*
+
+---
+## ⚙️ Portability & Technical Details
+
+### Different Screen Resolutions
+DingTalk is responsive. If you are on a smaller laptop or have a high zoom level, the bot might miss table columns.
+*   **Rule 1**: Always maximize the Chrome window.
+*   **Rule 2**: Set Chrome zoom to **100%** (`Ctrl + 0`).
+
+### Handling Port Conflicts (Error: Connection Failed)
+By default, the bot communicates over Port **9222**. If this port is being used by another app:
+1.  Open `chrome_launcher.js` and change `9222` to `9223`.
+2.  Open `ok.js` and change `9222` to `9223` in the `CONFIG` section at the top.
+
+### Session Logs
+Every run creates a timestamped log file in the folder (e.g., `session_2024-04-14.log`). This file contains the full history of what the bot read and what it submitted.
+
+---
+
+## 🛠 Troubleshooting
+*   **Bot finds task but doesn't click**: Check if your browser zoom is exactly 100%. If column indices have shifted, run `node dump_table.js` to debug.
+*   **"Update" Skip**: If you see the bot opening a task and immediately closing it with an `Escape` keypress, that's normal—it's a safety feature skipping a task that was already completed.
+
+---
 
 ## 🧰 Utility Toolkit (Diagnostics)
-If DingTalk updates their website, use these tools to "re-calibrate" the bot:
-*   `ok.js`: The main automation engine.
-*   `inspector.js`: Use this "X-ray" tool to find the exact coordinates and IDs of UI elements like the waveform or text boxes.
-*   `dump_table.js`: Run this to see exactly how the bot maps the task rows and columns.
-*   `jump_first.js`: A diagnostic tool that only finds the first "0" task and stops.
+Besides the main bot, this folder includes several diagnostic scripts used during development. These are useful if DingTalk updates their website and you need to "fix" the bot's eyes.
+
+*   `jump_first.js`: A specialized script that ONLY finds the first "0" and stops. Great for testing if the bot can see the table.
+*   `test_textbox.js`: Tests if the bot can correctly clear and type into the transcription box.
+*   `test_duration.js`: Tests the audio metadata polling (waiting for the waveform to load).
+*   `test_submit.js`: Tests the "Submit/Save" buttons.
+*   `inspector.js` & `inspect_wrapper.js`: Diagnostic tools to print out the technical details of the DingTalk UI.
+*   `fixer.js`: A script used to patch specific text issues in the dataset.
+*   `dump_table.js`: The most important diagnostic—run this if the bot is clicking the wrong columns.
 *   `logs/`: Contains `_human.log` (readable) and `_machine.jsonl` (for AI analysis).
 
 ---
+
+## 📦 Project Structure
+*   `ok.js`: The main automation engine.
+*   `chrome_launcher.js`: Opens Chrome in stealth mode for manual login.
+*   `scripts.txt`: Your source text dataset.
+*   `logs/`: Where your session history (Human and Machine formats) is saved.
 
 ## 🤝 For Collaborators (Sharing)
 This is a **Private** repository. To share:
