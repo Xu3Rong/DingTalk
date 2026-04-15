@@ -11,40 +11,10 @@ const fs = require('fs');
 const path = require('path');
 const stringSimilarity = require('string-similarity');
 
-// ─── 0. LOGGING SETUP ────────────────────────────────────────────────────────
-const logDir = path.join(__dirname, 'logs');
-if (!fs.existsSync(logDir)) fs.mkdirSync(logDir);
-
-const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-const humanLogFile = path.join(logDir, `proj${CONFIG.PROJECT_ID}_${timestamp}_human.log`);
-const machineLogFile = path.join(logDir, `proj${CONFIG.PROJECT_ID}_${timestamp}_machine.jsonl`);
-
-function log(msg, data = null) {
-  const time = new Date().toLocaleTimeString();
-  const line = `[${time}] ${msg}`;
-  
-  // 1. Terminal + Human Log
-  console.log(line);
-  try {
-    fs.appendFileSync(humanLogFile, line + '\n', 'utf8');
-  } catch (err) {}
-
-  // 2. Machine Log (JSONL)
-  if (data) {
-    try {
-      const entry = JSON.stringify({
-        timestamp: new Date().toISOString(),
-        ...data
-      });
-      fs.appendFileSync(machineLogFile, entry + '\n', 'utf8');
-    } catch (err) {}
-  }
-}
-
-// ─── 1. CONFIG ────────────────────────────────────────────────────────────────
+// ─── 0. CONFIG ────────────────────────────────────────────────────────────────
 const CONFIG = {
   // 👇 CHANGE THIS NUMBER WHEN YOUR PROJECT UPDATES 👇
-  PROJECT_ID: '37727', 
+  PROJECT_ID: '39649',
   get PROJECT_URL() { return `https://scale.dingtalk.com/projects/${this.PROJECT_ID}/data`; },
 
   CDP_URL: 'http://127.0.0.1:9222',
@@ -58,11 +28,43 @@ const CONFIG = {
   BEEP: '\u0007'
 };
 
+// ─── 1. LOGGING SETUP ────────────────────────────────────────────────────────
+const logDir = path.join(__dirname, 'logs');
+if (!fs.existsSync(logDir)) fs.mkdirSync(logDir);
+
+const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+const humanLogFile = path.join(logDir, `proj${CONFIG.PROJECT_ID}_${timestamp}_human.log`);
+const machineLogFile = path.join(logDir, `proj${CONFIG.PROJECT_ID}_${timestamp}_machine.jsonl`);
+
+function log(msg, data = null) {
+  const time = new Date().toLocaleTimeString();
+  const line = `[${time}] ${msg}`;
+
+  // 1. Terminal + Human Log
+  console.log(line);
+  try {
+    fs.appendFileSync(humanLogFile, line + '\n', 'utf8');
+  } catch (err) { }
+
+  // 2. Machine Log (JSONL)
+  if (data) {
+    try {
+      const entry = JSON.stringify({
+        timestamp: new Date().toISOString(),
+        ...data
+      });
+      fs.appendFileSync(machineLogFile, entry + '\n', 'utf8');
+    } catch (err) { }
+  }
+}
+
+// (CONFIG moved up to Logging Setup)
+
 const sleep = (min, max = min) => new Promise(r => setTimeout(r, Math.floor(Math.random() * (max - min + 1)) + min));
 
 // ─── 0.5. CLI ARGS & SAFETY MODES ───────────────────────────────────────────
-const DRY_RUN = process.argv.includes('--dry-run'); 
-const SWEEP_MODE = process.argv.includes('--sweep'); 
+const DRY_RUN = process.argv.includes('--dry-run');
+const SWEEP_MODE = process.argv.includes('--sweep');
 
 if (DRY_RUN) log('🔬 DRY RUN mode — scoring only, will NOT paste or submit.\n');
 if (SWEEP_MODE) log('🧹 SWEEP mode — autonomous read-only cycle, will NOT paste or submit.\n');
@@ -119,9 +121,9 @@ function loadScripts(projID) {
   } else {
     log(`\n   📂 Loaded dataset target: scripts_${projID}.txt`);
   }
-  
+
   if (!fs.existsSync(targetPath)) return;
-  
+
   const raw = fs.readFileSync(targetPath, 'utf8');
   const sentences = raw.replace(/\r\n/g, '\n').replace(/\n+/g, ' ')
     .split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(s => s.length > 15);
@@ -193,14 +195,14 @@ function formatForPasting(text) {
   let out = text;
 
   // 1. Convert specific number sequences to digits
-  const units = { 'satu':1, 'dua':2, 'tiga':3, 'empat':4, 'lima':5, 'enam':6, 'tujuh':7, 'lapan':8, 'sembilan':9 };
-  const mags = { 'puluh':10, 'belas':1, 'ratus':100, 'ribu':1000, 'juta':1000000, 'bilion':1000000000 };
+  const units = { 'satu': 1, 'dua': 2, 'tiga': 3, 'empat': 4, 'lima': 5, 'enam': 6, 'tujuh': 7, 'lapan': 8, 'sembilan': 9 };
+  const mags = { 'puluh': 10, 'belas': 1, 'ratus': 100, 'ribu': 1000, 'juta': 1000000, 'bilion': 1000000000 };
   out = out.replace(/\bseratus\s+peratus\b/gi, '100%');
-  
+
   let words = out.split(/\s+/);
   for (let i = 0; i < words.length; i++) {
     const w = words[i].toLowerCase();
-    const prev = i > 0 ? words[i-1].toLowerCase() : '';
+    const prev = i > 0 ? words[i - 1].toLowerCase() : '';
     if (units[w] !== undefined || w === 'sepuluh' || w === 'sebelas' || w === 'dua') {
       let val = 0, currentChunk = 0, j = i;
       while (j < words.length) {
@@ -254,21 +256,21 @@ function formatForPasting(text) {
   }
 
   // 3. Numerical Expressions
-  out = out.replace(/\b(ke)\s+(\d+)\b/gi, '$1-$2'); 
-  out = out.replace(/\b(\d+)\s+(an)\b/gi, '$1-$2'); 
-  out = out.replace(/\b(COVID)\s*(19)\b/gi, 'COVID-19'); 
+  out = out.replace(/\b(ke)\s+(\d+)\b/gi, '$1-$2');
+  out = out.replace(/\b(\d+)\s+(an)\b/gi, '$1-$2');
+  out = out.replace(/\b(COVID)\s*(19)\b/gi, 'COVID-19');
   out = out.replace(/\b(H5)\s*(N1)\b/gi, 'H5-N1');
   out = out.replace(/\b([A-Z]\w+)\s+(\d+)\b/g, '$1-$2');
   out = out.replace(/\b(\d+)\s+peratus\b/gi, '$1%');
 
   // 4. Prefixes with Proper Nouns
-  out = out.replace(/\b(pro|anti|se|sub)\s+([A-Z]\w+)\b/g, '$1-$2'); 
+  out = out.replace(/\b(pro|anti|se|sub)\s+([A-Z]\w+)\b/g, '$1-$2');
 
   // 5. Divine Pronouns
   out = out.replace(/\b(\w+)\s+(Nya|Mu|Ku)\b/g, '$1-$2');
 
   // 6. e-terms
-  out = out.replace(/\be\s+(mel|dagang|dompet|kasih|buku)\b/gi, 'e-$1'); 
+  out = out.replace(/\be\s+(mel|dagang|dompet|kasih|buku)\b/gi, 'e-$1');
 
   return out;
 }
@@ -281,27 +283,27 @@ function formatForPasting(text) {
 function normalizeStripped(text) {
   let norm = normalize(text);
   const exclusions = new Set([
-    'mereka', 'terima', 'maka', 'kerana', 'sebab', 'dengan', 'telah', 'boleh', 
+    'mereka', 'terima', 'maka', 'kerana', 'sebab', 'dengan', 'telah', 'boleh',
     'bukan', 'punya', 'untuk', 'dalam', 'merekanya', 'member', 'peratus'
   ]);
-  
+
   let words = norm.split(/\s+/);
   words = words.map(w => {
     if (exclusions.has(w) || w.length <= 4) return w;
-    
+
     let stem = w;
     const prefixes = [
-      /^me(?:m|n|ng|nge|ny)?/, /^pe(?:m|n|ng|nge|ny|r)?/, 
+      /^me(?:m|n|ng|nge|ny)?/, /^pe(?:m|n|ng|nge|ny|r)?/,
       /^ber/, /^bel/, /^ter/, /^di/, /^se/, /^ke/
     ];
-    
+
     for (const p of prefixes) {
       if (p.test(stem)) {
         const potential = stem.replace(p, '');
         // Root must be at least 4 chars to be safe
         if (potential.length >= 4) {
           stem = potential;
-          break; 
+          break;
         }
       }
     }
@@ -334,16 +336,16 @@ function sanityCheck(text, sec) {
 
 // ─── 4. FINGERPRINT SCORER & BEST MATCH ──────────────────────────────────────
 const FILLER = new Set([
-  'yang','dan','dia','ini','itu','akan','untuk','dengan','dari','pada','oleh',
-  'ke','di','ia','si','tu','ni','juga','atau','pun','saja','sahaja','lagi',
-  'sudah','telah','sedang','boleh','tidak','tak','ada','satu','kami','kita',
-  'anda','saya','mereka','kamu',
+  'yang', 'dan', 'dia', 'ini', 'itu', 'akan', 'untuk', 'dengan', 'dari', 'pada', 'oleh',
+  'ke', 'di', 'ia', 'si', 'tu', 'ni', 'juga', 'atau', 'pun', 'saja', 'sahaja', 'lagi',
+  'sudah', 'telah', 'sedang', 'boleh', 'tidak', 'tak', 'ada', 'satu', 'kami', 'kita',
+  'anda', 'saya', 'mereka', 'kamu',
   // Context-specific from scripts.txt
-  'merupakan','iaitu','adalah','sebagai','bagi','secara','setiap','serta',
-  'dalam','paling','hal','maka','bagaimana','dicapai','natijahnya','kesannya',
-  'perkara','penegasan','terhadap','harapan','harus','sedar',
-  'bahawa','menjadi','melalui','seterusnya','lebih',
-  'mampu','ditunjukkan','kegunaan','ditujukan','melibatkan','mempunyai','meningkatkan','peratus'
+  'merupakan', 'iaitu', 'adalah', 'sebagai', 'bagi', 'secara', 'setiap', 'serta',
+  'dalam', 'paling', 'hal', 'maka', 'bagaimana', 'dicapai', 'natijahnya', 'kesannya',
+  'perkara', 'penegasan', 'terhadap', 'harapan', 'harus', 'sedar',
+  'bahawa', 'menjadi', 'melalui', 'seterusnya', 'lebih',
+  'mampu', 'ditunjukkan', 'kegunaan', 'ditujukan', 'melibatkan', 'mempunyai', 'meningkatkan', 'peratus'
 ]);
 
 function scoreChunkVerbose(messy, chunk, normFn = normalize) {
@@ -363,7 +365,7 @@ function scoreChunkVerbose(messy, chunk, normFn = normalize) {
   if (mArr.length >= 6) {
     // Start anchor (First 5 words) - High weight to fix mid-sentence starts
     const start5 = mArr.slice(0, 5).join(' ');
-    if (nc.includes(start5)) anchor += 0.25; 
+    if (nc.includes(start5)) anchor += 0.25;
     else if (nc.includes(mArr.slice(0, 4).join(' '))) anchor += 0.15;
 
     // End anchor (Last 5 words)
@@ -392,7 +394,7 @@ function bestMatch(snippet, durationSec) {
   // --- Create Spanning Chunks ---
   const allChunks = [...cleanChunks];
   for (let i = 0; i < cleanChunks.length - 1; i++) {
-    const combined = cleanChunks[i] + ' ' + cleanChunks[i+1];
+    const combined = cleanChunks[i] + ' ' + cleanChunks[i + 1];
     allChunks.push(combined);
   }
 
@@ -405,7 +407,7 @@ function bestMatch(snippet, durationSec) {
     }
 
     const scores = scoreChunkVerbose(snippet, chunk);
-    
+
     // Duration-aware length bonus (max +0.05 for perfect length match)
     let lengthBonus = 0;
     if (expWords) {
@@ -423,21 +425,21 @@ function bestMatch(snippet, durationSec) {
   }
 
   candidates.sort((a, b) => b.total - a.total);
-  
+
   if (candidates.length === 0) return { best: 0, second: 0, gap: 0, chunk: '', secondChunk: '', strippedAgrees: false };
 
   const best = candidates[0];
   const second = candidates[1] || { total: 0, chunk: '' };
-  
+
   // Agreement check
   const strippedWinner = [...candidates].sort((a, b) => b.strippedTotal - a.strippedTotal)[0];
   const strippedAgrees = strippedWinner && strippedWinner.chunk === best.chunk;
 
-  return { 
-    best: best.total, 
-    second: second.total, 
+  return {
+    best: best.total,
+    second: second.total,
     gap: best.total - (second.total || 0),
-    chunk: best.chunk, 
+    chunk: best.chunk,
     secondChunk: second.chunk,
     strippedAgrees
   };
@@ -457,28 +459,28 @@ function trimToSnippetLength(snippetText, matchedChunk) {
     for (let i = 0; i <= chunkWords.length - size; i++) {
       const windowText = chunkWords.slice(i, i + size).join(' '), normWin = normalize(windowText);
       const winArr = normWin.split(/\s+/);
-      
+
       let s = stringSimilarity.compareTwoStrings(normSnippet, normWin);
       let tri = 0;
       for (let j = 0; j < snippetArr.length - 2; j++) {
         if (normWin.includes(snippetArr.slice(j, j + 3).join(' '))) tri += 0.05;
       }
-      
+
       // Anchor bonus for trimming: does this window start/end with the right words?
       let anchorBonus = 0;
       if (snippetArr.length >= 3) {
         // High bonus for exact start match
         if (winArr[0] === snippetArr[0]) anchorBonus += 0.20;
         else if (snippetArr[0].includes(winArr[0]) || winArr[0].includes(snippetArr[0])) anchorBonus += 0.10;
-        
+
         // High bonus for exact end match
         if (winArr[winArr.length - 1] === snippetArr[snippetArr.length - 1]) anchorBonus += 0.20;
       }
 
       const totalWinScore = s + Math.min(tri, 0.25) + anchorBonus;
-      if (totalWinScore > bestScore) { 
-        bestScore = totalWinScore; 
-        bestSeg = windowText; 
+      if (totalWinScore > bestScore) {
+        bestScore = totalWinScore;
+        bestSeg = windowText;
       }
     }
   }
@@ -501,9 +503,9 @@ async function readTextarea(page) {
       await page.locator(TEXTAREA_SEL).first().waitFor({ state: 'visible', timeout: 5000 });
       let v = await page.locator(TEXTAREA_SEL).first().inputValue().catch(() => '');
       if (!v) v = await page.locator(TEXTAREA_SEL).first().textContent().catch(() => '');
-      
+
       if (v && v.trim().length > 5) return v.trim();
-    } catch (e) {}
+    } catch (e) { }
     process.stdout.write('.');
     await sleep(500);
   }
@@ -514,16 +516,16 @@ async function readTextarea(page) {
 async function pasteText(page, text) {
   const box = page.locator(TEXTAREA_SEL).first();
   await box.focus();
-  
+
   // Use locator.press (isolated) instead of page.keyboard (global)
   await box.press('Control+A'); await sleep(80, 150);
-  await box.press('Backspace'); 
-  
+  await box.press('Backspace');
+
   // "Thinking pause" between clearing and pasting
-  await sleep(600, 1200); 
-  
-  await box.fill(text.trim());            await sleep(100, 150);
-  await box.press('Space');               await sleep(60, 100);
+  await sleep(600, 1200);
+
+  await box.fill(text.trim()); await sleep(100, 150);
+  await box.press('Space'); await sleep(60, 100);
   await box.press('Backspace');
 }
 
@@ -531,11 +533,11 @@ async function safeSubmit(page) {
   const submitBtn = page.locator('button[aria-label*="submit" i], button:has-text("Submit"), button:has-text("Save")').first();
   await submitBtn.click();
   await sleep(500, 800);
-  try { 
-    const dialogBtn = page.locator('[data-testid*="ok" i], [data-testid*="confirm" i], button:has-text("Ignore"), button:has-text("OK")').first(); 
-    await dialogBtn.waitFor({state:'visible', timeout: 1500}); 
-    await dialogBtn.click(); 
-  } catch {}
+  try {
+    const dialogBtn = page.locator('[data-testid*="ok" i], [data-testid*="confirm" i], button:has-text("Ignore"), button:has-text("OK")').first();
+    await dialogBtn.waitFor({ state: 'visible', timeout: 1500 });
+    await dialogBtn.click();
+  } catch { }
 }
 
 async function safeGoBack(page) {
@@ -551,7 +553,7 @@ async function safeGoBack(page) {
 // ─── 7. MAIN LAUNCH & LOOP ───────────────────────────────────────────────────
 (async () => {
   console.log(`🔌 Connecting to Opera on ${CONFIG.CDP_URL}...`);
-  
+
   let browser;
   try {
     browser = await chromium.connectOverCDP(CONFIG.CDP_URL);
@@ -561,10 +563,10 @@ async function safeGoBack(page) {
   }
 
   const context = browser.contexts()[0];
-  
+
   // Find the DingTalk tab, or fallback to the first tab
   let page = context.pages().find(p => p.url().includes('scale.dingtalk.com/projects'));
-  
+
   if (!page) {
     log("❌ DingTalk tab not found. Please open the DingTalk URL in your browser first!");
     process.exit(1);
@@ -580,13 +582,13 @@ async function safeGoBack(page) {
   }
 
   if (process.stdin.isTTY) { require('readline').emitKeypressEvents(process.stdin); process.stdin.setRawMode(false); }
-  
+
   log("\n━━━ BOT ACTIVE ━━━\n");
   log(`📄 Logging (Human): ${humanLogFile}`);
   log(`📄 Logging (Machine): ${machineLogFile}\n`);
   let lastTaskID = '';
   const skippedTaskIDs = new Set(); // Permanent memory of all Update-skipped tasks
-  
+
   let isVerifying = false; // "Sweep & Verify" state
   const sessionStats = {
     startTime: Date.now(),
@@ -602,8 +604,8 @@ async function safeGoBack(page) {
       const urlMatch = page.url().match(/projects\/(\d+)/);
       const projID = urlMatch ? urlMatch[1] : "unknown";
       if (projID !== currentProjectID) {
-          loadScripts(projID);
-          currentProjectID = projID;
+        loadScripts(projID);
+        currentProjectID = projID;
       }
       await sleep(CONFIG.POLL_INTERVAL_MS);
       const rows = await page.locator('.lsf-table-row').all();
@@ -616,7 +618,7 @@ async function safeGoBack(page) {
         // --- ZERO-FINDER (Adopted from jump_first.js) ---
         const col1 = (await cells[1].innerText().catch(() => '')).trim();
         const col2 = cells.length > 2 ? (await cells[2].innerText().catch(() => '')).trim() : '';
-        
+
         // Exact locator from jump_first.js for the 10th column count
         let col10 = '';
         if (cells.length > 5) {
@@ -645,7 +647,7 @@ async function safeGoBack(page) {
           });
 
           // --- "PRE-AIM" HUMANIZATION (Hover + Reaction Time) ---
-          await cells[1].hover({ force: true }).catch(() => {});
+          await cells[1].hover({ force: true }).catch(() => { });
           await sleep(200, 550); // Aiming/thinking time
 
           // --- INTERACTION (Direct dblclick, NO internal delay, guaranteed to trigger UI) ---
@@ -653,13 +655,13 @@ async function safeGoBack(page) {
           else if (col2 === '0') await cells[2].dblclick({ force: true });
           else await row.dblclick({ force: true });
 
-          await page.evaluate(() => window.getSelection().removeAllRanges()).catch(() => {});
+          await page.evaluate(() => window.getSelection().removeAllRanges()).catch(() => { });
           lastTaskID = taskID;
-            
+
           // --- LOADING (Adopted from test_duration.js) ---
           log("   ⏳ Waiting for Wrapper & Waveform UI to load...");
-          await page.waitForSelector('#waveform-layer-main', { timeout: 15000 }).catch(() => {});
-          
+          await page.waitForSelector('#waveform-layer-main', { timeout: 15000 }).catch(() => { });
+
           // --- VERIFY ID (The "Absolute Truth" fix) ---
           const verifiedID = await getVerifiedTaskID(page);
           if (verifiedID && verifiedID !== taskID) {
@@ -679,147 +681,147 @@ async function safeGoBack(page) {
           for (let i = 0; i < 40; i++) {
             rawDur = await durationInput.inputValue().catch(e => "");
             if (rawDur && rawDur.length >= 5 && rawDur !== "00:00:00" && rawDur !== "00:00:00:000") break;
-            process.stdout.write("."); 
+            process.stdout.write(".");
             await sleep(500);
           }
           log(""); // newline after dots
-          
+
           // --- CLICK WAVEFORM (Natively, aligned with test_click.js) ---
           log(`   🖱️ Audio duration confirmed [${rawDur.trim()}]. Clicking waveform...`);
-          await page.click('#waveform-layer-main').catch(() => {});
+          await page.click('#waveform-layer-main').catch(() => { });
           await sleep(1000, 1500);
 
           // Check for Update button
-          if (await page.locator('button:has-text("Update")').isVisible().catch(()=>false)) {
-              log("   ⏭️ Wrapper shows 'Update'! Task already done. Skipping.", {
-                event: "skipped_completed",
-                taskID
-              });
-              skippedTaskIDs.add(taskID);
-              sessionStats.skipped++;
-              await page.keyboard.press('Escape').catch(()=>{});
-              await sleep(1000);
-              processed = true; break;
+          if (await page.locator('button:has-text("Update")').isVisible().catch(() => false)) {
+            log("   ⏭️ Wrapper shows 'Update'! Task already done. Skipping.", {
+              event: "skipped_completed",
+              taskID
+            });
+            skippedTaskIDs.add(taskID);
+            sessionStats.skipped++;
+            await page.keyboard.press('Escape').catch(() => { });
+            await sleep(1000);
+            processed = true; break;
           }
 
-            // 4. Parse the extracted Duration & Text
-            let clipDur = parseDuration(rawDur);
-            const snippet = await readTextarea(page);
+          // 4. Parse the extracted Duration & Text
+          let clipDur = parseDuration(rawDur);
+          const snippet = await readTextarea(page);
 
-            if (!snippet || snippet.length < 5) {
-              log(`   ⚠ Textarea empty. Skipping.`);
+          if (!snippet || snippet.length < 5) {
+            log(`   ⚠ Textarea empty. Skipping.`);
+            await safeGoBack(page); processed = true; break;
+          }
+
+          log(`   📋 FULL SNIPPET EXTRACTED:\n--------------------------------------------------\n${snippet}\n--------------------------------------------------`);
+
+          // 3. MATCH AND TRIM
+          const { best, second, gap, chunk, secondChunk, strippedAgrees } = bestMatch(snippet, clipDur);
+          log(`   📊 Score: ${best.toFixed(4)} | Gap: ${gap.toFixed(4)}${strippedAgrees ? ' | ✅ Stripped Agrees' : ' | ⚠️ Stripped Disagrees'}`, {
+            event: "match_calculation",
+            taskID,
+            bestScore: best,
+            gap,
+            strippedAgrees
+          });
+
+          let isAmbiguous = false;
+          if (best > CONFIG.LOW_CONFIDENCE && gap < CONFIG.AMBIGUITY_GAP) {
+            const sim12 = stringSimilarity.compareTwoStrings(normalize(chunk), normalize(secondChunk));
+            if (sim12 > 0.40) {
+              log(`   💡 Ambiguity ignored (Overlapping/Similar sentences, sim=${sim12.toFixed(3)}).`);
+            } else {
+              log(`   🚨 AMBIGUOUS (Different sentences, gap=${gap.toFixed(4)}). Pausing.`);
+              isAmbiguous = true;
+              await pauseForReview(`Press Enter to skip.`);
               await safeGoBack(page); processed = true; break;
             }
+          }
 
-            log(`   📋 FULL SNIPPET EXTRACTED:\n--------------------------------------------------\n${snippet}\n--------------------------------------------------`);
+          // 4. PASTE CORRECTLY
+          if (!isAmbiguous && (best >= CONFIG.LOW_CONFIDENCE || SWEEP_MODE)) {
+            let finalPastedText = formatForPasting(snippet);
+            let mode = "low-confidence fallback";
 
-            // 3. MATCH AND TRIM
-            const { best, second, gap, chunk, secondChunk, strippedAgrees } = bestMatch(snippet, clipDur);
-            log(`   📊 Score: ${best.toFixed(4)} | Gap: ${gap.toFixed(4)}${strippedAgrees ? ' | ✅ Stripped Agrees' : ' | ⚠️ Stripped Disagrees'}`, {
-              event: "match_calculation",
-              taskID,
-              bestScore: best,
-              gap,
-              strippedAgrees
-            });
+            if (best >= CONFIG.HIGH_CONFIDENCE) {
+              const trimmed = trimToSnippetLength(snippet, chunk);
+              finalPastedText = formatForPasting(trimmed);
+              mode = "high-confidence (trimmed)";
 
-            let isAmbiguous = false;
-            if (best > CONFIG.LOW_CONFIDENCE && gap < CONFIG.AMBIGUITY_GAP) {
-              const sim12 = stringSimilarity.compareTwoStrings(normalize(chunk), normalize(secondChunk));
-              if (sim12 > 0.40) {
-                log(`   💡 Ambiguity ignored (Overlapping/Similar sentences, sim=${sim12.toFixed(3)}).`);
+              // Score-based Trim Revert
+              const postTrimScore = scoreChunk(snippet, trimmed);
+              if (postTrimScore < best - 0.02) {
+                log(`   ↩️ Trim lowered score significantly (${postTrimScore.toFixed(4)} vs ${best.toFixed(4)}). Reverting to full chunk.`);
+                finalPastedText = formatForPasting(chunk);
+                mode = "high-confidence (full chunk — trim reverted)";
+              }
+            }
+
+            const sanity = sanityCheck(finalPastedText, clipDur);
+            if (!sanity.ok) {
+              log(`   🚨 Sanity Check Failed: ${sanity.reason}`);
+
+              // Auto-revert: if trim was too aggressive, try the full un-trimmed chunk
+              if (mode.includes('trimmed') && finalPastedText !== snippet) {
+                const fullSanity = sanityCheck(chunk, clipDur);
+                const errTrim = Math.abs(wordCount(finalPastedText) - expectedWords(clipDur));
+                const errFull = Math.abs(wordCount(chunk) - expectedWords(clipDur));
+                if (fullSanity.ok || errFull < errTrim) {
+                  log(`   ↩️ Reverting to full un-trimmed chunk (better duration match).`);
+                  finalPastedText = chunk;
+                  mode = 'high-confidence (full chunk — trim reverted)';
+                } else {
+                  await pauseForReview(`Sanity failed and trim revert didn't help. Press Enter to skip.`);
+                  await safeGoBack(page); processed = true; break;
+                }
               } else {
-                log(`   🚨 AMBIGUOUS (Different sentences, gap=${gap.toFixed(4)}). Pausing.`);
-                isAmbiguous = true;
-                await pauseForReview(`Press Enter to skip.`);
+                await pauseForReview(`Sanity failed. Press Enter to skip.`);
                 await safeGoBack(page); processed = true; break;
               }
             }
 
-            // 4. PASTE CORRECTLY
-            if (!isAmbiguous && (best >= CONFIG.LOW_CONFIDENCE || SWEEP_MODE)) {
-              let finalPastedText = formatForPasting(snippet);
-              let mode = "low-confidence fallback";
+            log(`   📝 CONFIRMING PASTE CONTENT:\n--------------------------------------------------\n${finalPastedText}\n--------------------------------------------------`);
 
-              if (best >= CONFIG.HIGH_CONFIDENCE) {
-                const trimmed = trimToSnippetLength(snippet, chunk);
-                finalPastedText = formatForPasting(trimmed);
-                mode = "high-confidence (trimmed)";
-                
-                // Score-based Trim Revert
-                const postTrimScore = scoreChunk(snippet, trimmed);
-                if (postTrimScore < best - 0.02) {
-                  log(`   ↩️ Trim lowered score significantly (${postTrimScore.toFixed(4)} vs ${best.toFixed(4)}). Reverting to full chunk.`);
-                  finalPastedText = formatForPasting(chunk);
-                  mode = "high-confidence (full chunk — trim reverted)";
-                }
+            if (DRY_RUN || SWEEP_MODE) {
+              log('\n   🔬 READ-ONLY (DRY RUN / SWEEP) — not pasting.');
+              if (SWEEP_MODE) {
+                await sleep(1500);
+                await page.keyboard.press('Escape').catch(() => { });
+                await sleep(1000);
+                processed = true; break;
               }
-
-              const sanity = sanityCheck(finalPastedText, clipDur);
-              if (!sanity.ok) {
-                log(`   🚨 Sanity Check Failed: ${sanity.reason}`);
-
-                // Auto-revert: if trim was too aggressive, try the full un-trimmed chunk
-                if (mode.includes('trimmed') && finalPastedText !== snippet) {
-                  const fullSanity = sanityCheck(chunk, clipDur);
-                  const errTrim = Math.abs(wordCount(finalPastedText) - expectedWords(clipDur));
-                  const errFull = Math.abs(wordCount(chunk) - expectedWords(clipDur));
-                  if (fullSanity.ok || errFull < errTrim) {
-                    log(`   ↩️ Reverting to full un-trimmed chunk (better duration match).`);
-                    finalPastedText = chunk;
-                    mode = 'high-confidence (full chunk — trim reverted)';
-                  } else {
-                    await pauseForReview(`Sanity failed and trim revert didn't help. Press Enter to skip.`);
-                    await safeGoBack(page); processed = true; break;
-                  }
-                } else {
-                  await pauseForReview(`Sanity failed. Press Enter to skip.`);
-                  await safeGoBack(page); processed = true; break;
-                }
-              }
-
-              log(`   📝 CONFIRMING PASTE CONTENT:\n--------------------------------------------------\n${finalPastedText}\n--------------------------------------------------`);
-              
-              if (DRY_RUN || SWEEP_MODE) {
-                  log('\n   🔬 READ-ONLY (DRY RUN / SWEEP) — not pasting.');
-                  if (SWEEP_MODE) {
-                      await sleep(1500); 
-                      await page.keyboard.press('Escape').catch(()=>{}); 
-                      await sleep(1000);
-                      processed = true; break;
-                  }
-                  // For standalone dry-run, we just stop here
-                  process.exit(0);
-              }
-
-              await pasteText(page, finalPastedText);
-              
-              // Humanize: Add random 'lost focus' staring delay
-              const staringJitter = Math.floor(Math.random() * 4000) + 1500;
-              const reviewTime = Math.max(3000, wordCount(finalPastedText) * 200) + staringJitter;
-              log(`   🤔 Added Human Staring Jitter: +${(staringJitter/1000).toFixed(1)}s`);
-              log(`   ⏳ Review pause: ${(reviewTime/1000).toFixed(1)}s...`);
-              await sleep(reviewTime, reviewTime + 1000);
-
-              log('   ⏳ WAITING 3 SECONDS... PRESS CTRL+C NOW TO CANCEL IF WRONG!');
-              await sleep(3000);
-              log('   🖱 Submitting...');
-              await safeSubmit(page);
-              log('   ✅ Submitted.', {
-                event: "submission_success",
-                taskID,
-                text: finalPastedText
-              });
-              sessionStats.processed++;
-              await sleep(2000, 3000);
-              processed = true; 
-              isVerifying = false; // Reset verification if we found something
-              break;
-            } else if (!isAmbiguous) {
-              log("   ⚠️ Score too low. Skipping.");
-              await safeGoBack(page); processed = true; break;
+              // For standalone dry-run, we just stop here
+              process.exit(0);
             }
+
+            await pasteText(page, finalPastedText);
+
+            // Humanize: Add random 'lost focus' staring delay
+            const staringJitter = Math.floor(Math.random() * 4000) + 1500;
+            const reviewTime = Math.max(3000, wordCount(finalPastedText) * 200) + staringJitter;
+            log(`   🤔 Added Human Staring Jitter: +${(staringJitter / 1000).toFixed(1)}s`);
+            log(`   ⏳ Review pause: ${(reviewTime / 1000).toFixed(1)}s...`);
+            await sleep(reviewTime, reviewTime + 1000);
+
+            log('   ⏳ WAITING 3 SECONDS... PRESS CTRL+C NOW TO CANCEL IF WRONG!');
+            await sleep(3000);
+            log('   🖱 Submitting...');
+            await safeSubmit(page);
+            log('   ✅ Submitted.', {
+              event: "submission_success",
+              taskID,
+              text: finalPastedText
+            });
+            sessionStats.processed++;
+            await sleep(2000, 3000);
+            processed = true;
+            isVerifying = false; // Reset verification if we found something
+            break;
+          } else if (!isAmbiguous) {
+            log("   ⚠️ Score too low. Skipping.");
+            await safeGoBack(page); processed = true; break;
           }
+        }
       }
 
       // --- COMPLETION DETECTION ('Sweep & Verify' logic) ---
@@ -836,7 +838,7 @@ async function safeGoBack(page) {
             // We were ALREADY verifying and reached the bottom again = TRULY DONE!
             process.stdout.write(CONFIG.BEEP);
             const durationMin = ((Date.now() - sessionStats.startTime) / 60000).toFixed(1);
-            
+
             log(`\n━━━━━━━━━━━━━━━━━━━━ SESSION COMPLETE ━━━━━━━━━━━━━━━━━━━━`);
             log(`🏁 No more tasks found after a full sweep.`);
             log(`📊 Successes:  ${sessionStats.processed}`);

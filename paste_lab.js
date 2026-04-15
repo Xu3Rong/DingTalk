@@ -34,29 +34,9 @@ const DRY_RUN = process.argv.includes('--dry-run');
 const BATCH_MODE = process.argv.includes('--batch');
 const SWEEP_MODE = process.argv.includes('--sweep');
 
-// ─── 1. LOGGING (mirrors ok.js dual-log) ─────────────────────────────────────
-const logDir = path.join(__dirname, 'logs');
-if (!fs.existsSync(logDir)) fs.mkdirSync(logDir);
-
-const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-const humanLogFile = path.join(logDir, `lab_proj${CONFIG.PROJECT_ID}_${timestamp}_human.log`);
-const machineLogFile = path.join(logDir, `lab_proj${CONFIG.PROJECT_ID}_${timestamp}_machine.jsonl`);
-
-function log(msg, data = null) {
-  const time = new Date().toLocaleTimeString();
-  const line = `[${time}] ${msg}`;
-  console.log(line);
-  try { fs.appendFileSync(humanLogFile, line + '\n', 'utf8'); } catch (_) { }
-  if (data) {
-    try {
-      const entry = JSON.stringify({ timestamp: new Date().toISOString(), ...data });
-      fs.appendFileSync(machineLogFile, entry + '\n', 'utf8');
-    } catch (_) { }
-  }
-}
-
 // ─── 2. CONFIG ────────────────────────────────────────────────────────────────
 const CONFIG = {
+  PROJECT_ID: '39649',
   CDP_URL: 'http://127.0.0.1:9222',
 
   // ── Scorer thresholds (tune here, then copy to ok.js when happy) ──
@@ -71,6 +51,15 @@ const CONFIG = {
   // ── Lab display ──
   TOP_N_CANDIDATES: 3,
   SHOW_TRIM_WINDOWS: 5,
+};
+
+// ─── 1. LOGGING (mirrors ok.js dual-log) ─────────────────────────────────────
+const logDir = path.join(__dirname, 'logs');
+if (!fs.existsSync(logDir)) fs.mkdirSync(logDir);
+
+const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+const humanLogFile = path.join(logDir, `lab_proj${CONFIG.PROJECT_ID}_${timestamp}_human.log`);
+const machineLogFile = path.join(logDir, `lab_proj${CONFIG.PROJECT_ID}_${timestamp}_machine.jsonl`);
 
   /**
    * PASTE_MODE — swap to compare paste strategies:
