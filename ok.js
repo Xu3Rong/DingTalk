@@ -16,8 +16,8 @@ const logDir = path.join(__dirname, 'logs');
 if (!fs.existsSync(logDir)) fs.mkdirSync(logDir);
 
 const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-const humanLogFile = path.join(logDir, `session_${timestamp}_human.log`);
-const machineLogFile = path.join(logDir, `session_${timestamp}_machine.jsonl`);
+const humanLogFile = path.join(logDir, `proj${CONFIG.PROJECT_ID}_${timestamp}_human.log`);
+const machineLogFile = path.join(logDir, `proj${CONFIG.PROJECT_ID}_${timestamp}_machine.jsonl`);
 
 function log(msg, data = null) {
   const time = new Date().toLocaleTimeString();
@@ -53,12 +53,19 @@ const CONFIG = {
   LOW_CONFIDENCE: 0.24,
   AMBIGUITY_GAP: 0.04,
   WORDS_PER_SECOND: 1.55,
-  LENGTH_TOLERANCE: 2.2,
+  LENGTH_TOLERANCE: 3.0, // Increased to allow "spanning" chunks to be considered
   POLL_INTERVAL_MS: 1500,
   BEEP: '\u0007'
 };
 
 const sleep = (min, max = min) => new Promise(r => setTimeout(r, Math.floor(Math.random() * (max - min + 1)) + min));
+
+// ─── 0.5. CLI ARGS & SAFETY MODES ───────────────────────────────────────────
+const DRY_RUN = process.argv.includes('--dry-run'); 
+const SWEEP_MODE = process.argv.includes('--sweep'); 
+
+if (DRY_RUN) log('🔬 DRY RUN mode — scoring only, will NOT paste or submit.\n');
+if (SWEEP_MODE) log('🧹 SWEEP mode — autonomous read-only cycle, will NOT paste or submit.\n');
 
 /**
  * Simulates a human scrolling behavior by breaking large scrolls into smaller increments
@@ -150,19 +157,158 @@ async function getVerifiedTaskID(page) {
 // ─── 2. TEXT NORMALISATION ────────────────────────────────────────────────────
 function normalize(text) {
   let norm = text.toLowerCase()
-    .replace(/-/g, ' ').replace(/%/g, ' peratus')
-    .replace(/[^\w\s]/gi, '').replace(/\s+/g, ' ').trim();
+    // Treat "peratus" as % (consume leading space if present)
+    .replace(/\s*peratus\b/g, '%')
+    // Normalize reduplicated words to hyphenated form (user preference)
+    // "sama sama" -> "sama-sama", "besar besaran" -> "besar-besaran"
+    .replace(/\b([a-zA-Z]+)\s+(\1\w*)\b/gi, '$1-$2')
+    // Remove punctuation but keep alphanumeric, hyphens (for reduplication/prefixes), and %
+    .replace(/[^\w\s\-%]/gi, '')
+    .replace(/\s+/g, ' ').trim();
 
   const magMap = {
-    'bilion': '000000000', 'juta': '000000', 'ribu': '000', 
-    'ratus': '00', 'puluh': '0', 'sebelas': '11', 'sepuluh': '10',
+    // Magnitude words (se- variants)
+    'sebilion': '1000000000', 'sejuta': '1000000', 'seribu': '1000', 'seratus': '100', 'sepuluh': '10',
+    // Malay cardinal digits
+    'satu': '1', 'dua': '2', 'tiga': '3', 'empat': '4', 'lima': '5',
+    'enam': '6', 'tujuh': '7', 'lapan': '8', 'sembilan': '9',
+    // Magnitude words (standard)
+    'bilion': '000000000', 'juta': '000000', 'ribu': '000',
+    'ratus': '00', 'puluh': '0', 'sebelas': '11',
     'sifar': '0', 'kosong': '0', 'setengah': '0.5'
   };
 
   Object.keys(magMap).forEach(word => {
     norm = norm.replace(new RegExp(`\\b${word}\\b`, 'g'), magMap[word]);
   });
+
+  // Squash spaces between digits: "2 0 0" → "200", "1 0 0 0 0 0 0" → "1000000"
+  norm = norm.replace(/(\d)\s+(?=\d)/g, '$1');
+
   return norm;
+}
+
+// ─── 2.5 FINAL PASTE FORMATTER (Grammar & Numbers) ───────────────────────
+function formatForPasting(text) {
+  let out = text;
+
+  // 1. Convert specific number sequences to digits
+  const units = { 'satu':1, 'dua':2, 'tiga':3, 'empat':4, 'lima':5, 'enam':6, 'tujuh':7, 'lapan':8, 'sembilan':9 };
+  const mags = { 'puluh':10, 'belas':1, 'ratus':100, 'ribu':1000, 'juta':1000000, 'bilion':1000000000 };
+  out = out.replace(/\bseratus\s+peratus\b/gi, '100%');
+  
+  let words = out.split(/\s+/);
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i].toLowerCase();
+    const prev = i > 0 ? words[i-1].toLowerCase() : '';
+    if (units[w] !== undefined || w === 'sepuluh' || w === 'sebelas' || w === 'dua') {
+      let val = 0, currentChunk = 0, j = i;
+      while (j < words.length) {
+        const tw = words[j].toLowerCase();
+        if (units[tw] !== undefined) {
+          currentChunk += units[tw];
+        } else if (tw === 'belas') {
+          currentChunk += 10;
+        } else if (tw === 'sepuluh') {
+          currentChunk += 10;
+        } else if (tw === 'sebelas') {
+          currentChunk += 11;
+        } else if (mags[tw] !== undefined) {
+          if (currentChunk === 0) currentChunk = 1;
+          if (mags[tw] >= 1000) {
+            val += currentChunk * mags[tw];
+            currentChunk = 0;
+          } else {
+            currentChunk *= mags[tw];
+          }
+        } else {
+          break;
+        }
+        j++;
+      }
+      val += currentChunk;
+      if (j > i + 1 || prev === 'ke') {
+        words.splice(i, j - i, val.toString());
+      }
+    }
+  }
+  out = words.join(' ');
+
+  // 2. Kata Ganda Penuh & Berimbuhan
+  out = out.replace(/\b([a-zA-Z]+)\s+(\1\w*)\b/gi, '$1-$2');
+
+  // Kata Ganda Berentak
+  const berentak = {
+    'sayur mayur': 'sayur-mayur', 'kuih muih': 'kuih-muih', 'batu batan': 'batu-batan',
+    'saudara mara': 'saudara-mara', 'gunung ganang': 'gunung-ganang', 'lauk pauk': 'lauk-pauk',
+    'warna warni': 'warna-warni', 'tolong menolong': 'tolong-menolong',
+    'anai anai': 'anai-anai', 'rama rama': 'rama-rama', 'kura kura': 'kura-kura',
+    'labah labah': 'labah-labah', 'agar agar': 'agar-agar', 'anting anting': 'anting-anting',
+    'layang layang': 'layang-layang', 'undang undang': 'undang-undang',
+    'sekali sekala': 'sekali-sekala', 'tiba tiba': 'tiba-tiba'
+  };
+  for (const [k, v] of Object.entries(berentak)) {
+    out = out.replace(new RegExp(`\\b${k}\\b`, 'gi'), (match) => {
+      return match[0] === match[0].toUpperCase() ? v.charAt(0).toUpperCase() + v.slice(1) : v;
+    });
+  }
+
+  // 3. Numerical Expressions
+  out = out.replace(/\b(ke)\s+(\d+)\b/gi, '$1-$2'); 
+  out = out.replace(/\b(\d+)\s+(an)\b/gi, '$1-$2'); 
+  out = out.replace(/\b(COVID)\s*(19)\b/gi, 'COVID-19'); 
+  out = out.replace(/\b(H5)\s*(N1)\b/gi, 'H5-N1');
+  out = out.replace(/\b([A-Z]\w+)\s+(\d+)\b/g, '$1-$2');
+  out = out.replace(/\b(\d+)\s+peratus\b/gi, '$1%');
+
+  // 4. Prefixes with Proper Nouns
+  out = out.replace(/\b(pro|anti|se|sub)\s+([A-Z]\w+)\b/g, '$1-$2'); 
+
+  // 5. Divine Pronouns
+  out = out.replace(/\b(\w+)\s+(Nya|Mu|Ku)\b/g, '$1-$2');
+
+  // 6. e-terms
+  out = out.replace(/\be\s+(mel|dagang|dompet|kasih|buku)\b/gi, 'e-$1'); 
+
+  return out;
+}
+
+/**
+ * Prefix-stripped variant for Malay morphology.
+ * Prevents common prefixes from diluting the core keyword match.
+ * Uses a conservative "Prefix-Only" approach to avoid over-stripping roots.
+ */
+function normalizeStripped(text) {
+  let norm = normalize(text);
+  const exclusions = new Set([
+    'mereka', 'terima', 'maka', 'kerana', 'sebab', 'dengan', 'telah', 'boleh', 
+    'bukan', 'punya', 'untuk', 'dalam', 'merekanya', 'member', 'peratus'
+  ]);
+  
+  let words = norm.split(/\s+/);
+  words = words.map(w => {
+    if (exclusions.has(w) || w.length <= 4) return w;
+    
+    let stem = w;
+    const prefixes = [
+      /^me(?:m|n|ng|nge|ny)?/, /^pe(?:m|n|ng|nge|ny|r)?/, 
+      /^ber/, /^bel/, /^ter/, /^di/, /^se/, /^ke/
+    ];
+    
+    for (const p of prefixes) {
+      if (p.test(stem)) {
+        const potential = stem.replace(p, '');
+        // Root must be at least 4 chars to be safe
+        if (potential.length >= 4) {
+          stem = potential;
+          break; 
+        }
+      }
+    }
+    return stem;
+  });
+
+  return words.join(' ').trim();
 }
 
 // ─── 3. DURATION & SANITY HELPERS ────────────────────────────────────────────
@@ -187,10 +333,21 @@ function sanityCheck(text, sec) {
 }
 
 // ─── 4. FINGERPRINT SCORER & BEST MATCH ──────────────────────────────────────
-const FILLER = new Set(['yang','dan','dia','ini','itu','akan','untuk','dengan','dari','pada','oleh','ke','di','ia','si','tu','ni','juga','atau','pun','saja','sahaja','lagi','sudah','telah','sedang','boleh','tidak','tak','ada','satu','kami','kita','anda','saya','mereka','kamu']);
+const FILLER = new Set([
+  'yang','dan','dia','ini','itu','akan','untuk','dengan','dari','pada','oleh',
+  'ke','di','ia','si','tu','ni','juga','atau','pun','saja','sahaja','lagi',
+  'sudah','telah','sedang','boleh','tidak','tak','ada','satu','kami','kita',
+  'anda','saya','mereka','kamu',
+  // Context-specific from scripts.txt
+  'merupakan','iaitu','adalah','sebagai','bagi','secara','setiap','serta',
+  'dalam','paling','hal','maka','bagaimana','dicapai','natijahnya','kesannya',
+  'perkara','penegasan','terhadap','harapan','harus','sedar',
+  'bahawa','menjadi','melalui','seterusnya','lebih',
+  'mampu','ditunjukkan','kegunaan','ditujukan','melibatkan','mempunyai','meningkatkan','peratus'
+]);
 
-function scoreChunk(messy, chunk) {
-  const nm = normalize(messy), nc = normalize(chunk);
+function scoreChunkVerbose(messy, chunk, normFn = normalize) {
+  const nm = normFn(messy), nc = normFn(chunk);
   const mArr = nm.split(/\s+/);
   const kw = [...new Set(mArr.filter(w => (w.length > 3 || !isNaN(w)) && !FILLER.has(w)))];
 
@@ -201,26 +358,89 @@ function scoreChunk(messy, chunk) {
   for (let i = 0; i < mArr.length - 2; i++) if (nc.includes(mArr.slice(i, i + 3).join(' '))) tri += 0.10;
   for (let i = 0; i < mArr.length - 1; i++) if (nc.includes(mArr.slice(i, i + 2).join(' '))) bi += 0.03;
 
+  // --- 5-WORD ANCHOR LOGIC ---
   let anchor = 0;
-  if (mArr.length >= 4) {
-    if (nc.includes(mArr.slice(0, 3).join(' ')) || nc.includes(mArr.slice(1, 4).join(' '))) anchor += 0.12;
-    if (nc.includes(mArr.slice(-3).join(' ')) || nc.includes(mArr.slice(-4, -1).join(' '))) anchor += 0.12;
-  } else if (mArr.length === 3) {
-    if (nc.includes(mArr.join(' '))) anchor += 0.24; 
+  if (mArr.length >= 6) {
+    // Start anchor (First 5 words) - High weight to fix mid-sentence starts
+    const start5 = mArr.slice(0, 5).join(' ');
+    if (nc.includes(start5)) anchor += 0.25; 
+    else if (nc.includes(mArr.slice(0, 4).join(' '))) anchor += 0.15;
+
+    // End anchor (Last 5 words)
+    const end5 = mArr.slice(-5).join(' ');
+    if (nc.includes(end5)) anchor += 0.15;
+    else if (nc.includes(mArr.slice(-4).join(' '))) anchor += 0.10;
+  } else if (mArr.length >= 3) {
+    if (nc.includes(mArr.join(' '))) anchor += 0.40;
   }
 
-  return overlap * 0.22 + sim * 0.13 + Math.min(tri, 0.40) * 0.38 + Math.min(bi, 0.15) * 0.10 + anchor * 0.17;
+  const triCapped = Math.min(tri, 0.40);
+  const biCapped = Math.min(bi, 0.15);
+  // Re-weighted to favor anchor and overlap over sim (which is affected by chunk length)
+  const total = overlap * 0.25 + sim * 0.10 + triCapped * 0.35 + biCapped * 0.10 + anchor * 0.20;
+  return { total, overlap, sim, trigram: triCapped, bigram: biCapped, anchor };
+}
+
+function scoreChunk(messy, chunk) {
+  return scoreChunkVerbose(messy, chunk).total;
 }
 
 function bestMatch(snippet, durationSec) {
-  let best = 0, second = 0, bestChunk = '', secondChunk = '';
-  for (const chunk of cleanChunks) {
-    if (durationSec && wordCount(chunk) < expectedWords(durationSec) * 0.40) continue; 
-    let s = scoreChunk(snippet, chunk);
-    if (s > best) { second = best; secondChunk = bestChunk; best = s; bestChunk = chunk; }
-    else if (s > second) { second = s; secondChunk = chunk; }
+  const candidates = [];
+  const expWords = durationSec ? expectedWords(durationSec) : null;
+
+  // --- Create Spanning Chunks ---
+  const allChunks = [...cleanChunks];
+  for (let i = 0; i < cleanChunks.length - 1; i++) {
+    const combined = cleanChunks[i] + ' ' + cleanChunks[i+1];
+    allChunks.push(combined);
   }
-  return { best, second, gap: best - second, chunk: bestChunk, secondChunk };
+
+  for (const chunk of allChunks) {
+    // Filter too-short AND too-long chunks (bidirectional)
+    if (expWords) {
+      const cw = wordCount(chunk);
+      if (cw < expWords * 0.40) continue;
+      if (cw > expWords * CONFIG.LENGTH_TOLERANCE) continue;
+    }
+
+    const scores = scoreChunkVerbose(snippet, chunk);
+    
+    // Duration-aware length bonus (max +0.05 for perfect length match)
+    let lengthBonus = 0;
+    if (expWords) {
+      const cw = wordCount(chunk);
+      const ratio = cw > expWords ? expWords / cw : cw / expWords;
+      lengthBonus = ratio * 0.05;
+      scores.total += lengthBonus;
+    }
+
+    // Prefix-stripped scoring (from paste_lab.js)
+    const strippedScores = scoreChunkVerbose(snippet, chunk, normalizeStripped);
+    const strippedTotal = strippedScores.total + lengthBonus;
+
+    candidates.push({ chunk, strippedTotal, ...scores });
+  }
+
+  candidates.sort((a, b) => b.total - a.total);
+  
+  if (candidates.length === 0) return { best: 0, second: 0, gap: 0, chunk: '', secondChunk: '', strippedAgrees: false };
+
+  const best = candidates[0];
+  const second = candidates[1] || { total: 0, chunk: '' };
+  
+  // Agreement check
+  const strippedWinner = [...candidates].sort((a, b) => b.strippedTotal - a.strippedTotal)[0];
+  const strippedAgrees = strippedWinner && strippedWinner.chunk === best.chunk;
+
+  return { 
+    best: best.total, 
+    second: second.total, 
+    gap: best.total - (second.total || 0),
+    chunk: best.chunk, 
+    secondChunk: second.chunk,
+    strippedAgrees
+  };
 }
 
 // ─── 5. ELASTIC TRIMMER ──────────────────────────────────────────────────────
@@ -236,12 +456,30 @@ function trimToSnippetLength(snippetText, matchedChunk) {
   for (let size = minLen; size <= maxLen; size++) {
     for (let i = 0; i <= chunkWords.length - size; i++) {
       const windowText = chunkWords.slice(i, i + size).join(' '), normWin = normalize(windowText);
+      const winArr = normWin.split(/\s+/);
+      
       let s = stringSimilarity.compareTwoStrings(normSnippet, normWin);
       let tri = 0;
       for (let j = 0; j < snippetArr.length - 2; j++) {
         if (normWin.includes(snippetArr.slice(j, j + 3).join(' '))) tri += 0.05;
       }
-      if (s + Math.min(tri, 0.20) > bestScore) { bestScore = s + Math.min(tri, 0.20); bestSeg = windowText; }
+      
+      // Anchor bonus for trimming: does this window start/end with the right words?
+      let anchorBonus = 0;
+      if (snippetArr.length >= 3) {
+        // High bonus for exact start match
+        if (winArr[0] === snippetArr[0]) anchorBonus += 0.20;
+        else if (snippetArr[0].includes(winArr[0]) || winArr[0].includes(snippetArr[0])) anchorBonus += 0.10;
+        
+        // High bonus for exact end match
+        if (winArr[winArr.length - 1] === snippetArr[snippetArr.length - 1]) anchorBonus += 0.20;
+      }
+
+      const totalWinScore = s + Math.min(tri, 0.25) + anchorBonus;
+      if (totalWinScore > bestScore) { 
+        bestScore = totalWinScore; 
+        bestSeg = windowText; 
+      }
     }
   }
   return bestSeg;
@@ -257,12 +495,20 @@ async function pauseForReview(reason) {
 }
 
 async function readTextarea(page) {
-  try {
-    await page.locator(TEXTAREA_SEL).first().waitFor({ state: 'visible', timeout: 5000 });
-    const v = await page.locator(TEXTAREA_SEL).first().inputValue().catch(() => '');
-    if (v) return v.trim();
-    return (await page.locator(TEXTAREA_SEL).first().textContent().catch(() => '')).trim();
-  } catch { return ''; }
+  log('   ⏳ Polling transcript content...');
+  for (let i = 0; i < 30; i++) {
+    try {
+      await page.locator(TEXTAREA_SEL).first().waitFor({ state: 'visible', timeout: 5000 });
+      let v = await page.locator(TEXTAREA_SEL).first().inputValue().catch(() => '');
+      if (!v) v = await page.locator(TEXTAREA_SEL).first().textContent().catch(() => '');
+      
+      if (v && v.trim().length > 5) return v.trim();
+    } catch (e) {}
+    process.stdout.write('.');
+    await sleep(500);
+  }
+  process.stdout.write('\n');
+  return '';
 }
 
 async function pasteText(page, text) {
@@ -468,20 +714,22 @@ async function safeGoBack(page) {
             log(`   📋 FULL SNIPPET EXTRACTED:\n--------------------------------------------------\n${snippet}\n--------------------------------------------------`);
 
             // 3. MATCH AND TRIM
-            const { best, second, gap, chunk, secondChunk } = bestMatch(snippet, clipDur);
-            log(`   📊 Score: ${best.toFixed(3)} | Gap: ${gap.toFixed(3)}`, {
+            const { best, second, gap, chunk, secondChunk, strippedAgrees } = bestMatch(snippet, clipDur);
+            log(`   📊 Score: ${best.toFixed(4)} | Gap: ${gap.toFixed(4)}${strippedAgrees ? ' | ✅ Stripped Agrees' : ' | ⚠️ Stripped Disagrees'}`, {
               event: "match_calculation",
               taskID,
               bestScore: best,
-              gap
+              gap,
+              strippedAgrees
             });
 
             let isAmbiguous = false;
             if (best > CONFIG.LOW_CONFIDENCE && gap < CONFIG.AMBIGUITY_GAP) {
-              if (stringSimilarity.compareTwoStrings(normalize(chunk), normalize(secondChunk)) > 0.40) {
-                log(`   💡 Ambiguity ignored (Overlapping sentences).`);
+              const sim12 = stringSimilarity.compareTwoStrings(normalize(chunk), normalize(secondChunk));
+              if (sim12 > 0.40) {
+                log(`   💡 Ambiguity ignored (Overlapping/Similar sentences, sim=${sim12.toFixed(3)}).`);
               } else {
-                log(`   🚨 AMBIGUOUS. Pausing.`);
+                log(`   🚨 AMBIGUOUS (Different sentences, gap=${gap.toFixed(4)}). Pausing.`);
                 isAmbiguous = true;
                 await pauseForReview(`Press Enter to skip.`);
                 await safeGoBack(page); processed = true; break;
@@ -489,23 +737,61 @@ async function safeGoBack(page) {
             }
 
             // 4. PASTE CORRECTLY
-            if (!isAmbiguous && best >= CONFIG.LOW_CONFIDENCE) {
-              let finalPastedText = snippet;
+            if (!isAmbiguous && (best >= CONFIG.LOW_CONFIDENCE || SWEEP_MODE)) {
+              let finalPastedText = formatForPasting(snippet);
               let mode = "low-confidence fallback";
 
               if (best >= CONFIG.HIGH_CONFIDENCE) {
-                finalPastedText = trimToSnippetLength(snippet, chunk);
+                const trimmed = trimToSnippetLength(snippet, chunk);
+                finalPastedText = formatForPasting(trimmed);
                 mode = "high-confidence (trimmed)";
+                
+                // Score-based Trim Revert
+                const postTrimScore = scoreChunk(snippet, trimmed);
+                if (postTrimScore < best - 0.02) {
+                  log(`   ↩️ Trim lowered score significantly (${postTrimScore.toFixed(4)} vs ${best.toFixed(4)}). Reverting to full chunk.`);
+                  finalPastedText = formatForPasting(chunk);
+                  mode = "high-confidence (full chunk — trim reverted)";
+                }
               }
 
               const sanity = sanityCheck(finalPastedText, clipDur);
               if (!sanity.ok) {
-                  log(`   🚨 Sanity Check Failed: ${sanity.reason}`);
-                  await pauseForReview(`Press Enter to skip.`);
+                log(`   🚨 Sanity Check Failed: ${sanity.reason}`);
+
+                // Auto-revert: if trim was too aggressive, try the full un-trimmed chunk
+                if (mode.includes('trimmed') && finalPastedText !== snippet) {
+                  const fullSanity = sanityCheck(chunk, clipDur);
+                  const errTrim = Math.abs(wordCount(finalPastedText) - expectedWords(clipDur));
+                  const errFull = Math.abs(wordCount(chunk) - expectedWords(clipDur));
+                  if (fullSanity.ok || errFull < errTrim) {
+                    log(`   ↩️ Reverting to full un-trimmed chunk (better duration match).`);
+                    finalPastedText = chunk;
+                    mode = 'high-confidence (full chunk — trim reverted)';
+                  } else {
+                    await pauseForReview(`Sanity failed and trim revert didn't help. Press Enter to skip.`);
+                    await safeGoBack(page); processed = true; break;
+                  }
+                } else {
+                  await pauseForReview(`Sanity failed. Press Enter to skip.`);
                   await safeGoBack(page); processed = true; break;
+                }
               }
 
               log(`   📝 CONFIRMING PASTE CONTENT:\n--------------------------------------------------\n${finalPastedText}\n--------------------------------------------------`);
+              
+              if (DRY_RUN || SWEEP_MODE) {
+                  log('\n   🔬 READ-ONLY (DRY RUN / SWEEP) — not pasting.');
+                  if (SWEEP_MODE) {
+                      await sleep(1500); 
+                      await page.keyboard.press('Escape').catch(()=>{}); 
+                      await sleep(1000);
+                      processed = true; break;
+                  }
+                  // For standalone dry-run, we just stop here
+                  process.exit(0);
+              }
+
               await pasteText(page, finalPastedText);
               
               // Humanize: Add random 'lost focus' staring delay
