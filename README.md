@@ -26,27 +26,40 @@ If you are setting up the bot for the first time, you must prepare your environm
 
 ---
 
-## 🏎️ Usage Workflow (The 2-Terminal Process)
-To bypass bot detection, the system runs in two separate processes.
+## 🏎️ Usage Workflow (The Professional Process)
+To achieve zero-error mapping at 100% accuracy, we now use a 3-step surgical workflow.
 
-### Step A: Launch the Stealth Browser
-In your **first terminal**, run:
+### 1. The Pre-Flight (Data Extraction)
+Extract all raw ASR data from the project into a log file without typing anything.
 ```bash
-node chrome_launcher.js
+node preflight.js
 ```
-*   **Action**: A Chrome window will open.
-*   **Requirement**: Log into your Google/DingTalk account manually.
-*   **Crucial**: Navigate to your project tasks page and **keep this terminal open**.
-*   **Privacy**: Your login session is saved in the local `chrome_user_data/` folder, not on the cloud.
+*   **Result**: Generates a `.jsonl` log in the `logs/` folder.
 
-### Step B: Start the Bot
-Once logged in, open a **second terminal** and run:
+### 2. The Mapper (Script Alignment)
+Align the extracted ASR with your master script (`scripts_XXXXX.txt`) to create a review file.
 ```bash
-node ok.js
+node mapper.js
 ```
-*   **Action**: The bot will connect to Chrome and begin hunting for unprocessed ("0") tasks.
-*   **Verification**: The bot cross-references Task IDs with the URL and UI to ensure zero data-entry errors.
-*   **Completion**: After reaching the end, the bot performs a final "Safety Sweep" from the top, plays a beep, and prints a session summary.
+*   **Result**: Generates `review_XXXXX.txt`.
+*   **Action**: Open `review_XXXXX.txt`. Scan for `PLEASE REVIEW` or low confidence scores. If a mapping is wrong, manually fix the `MAP :` line. Your corrections here become the "Absolute Truth" for the bot.
+
+### 3. The Audit (Final Submission)
+Run the high-speed Sweep auditor which uses your review file to paste corrected text.
+```bash
+node ok_compare.js
+```
+*   **Action**: The bot will fast-track every task using your corrected `review_XXXXX.txt`.
+*   **Failover**: If the bot finishes and lists **MISSING TASKS** (due to DingTalk ID mismatches), run `node ok_single_task.js --task <ID>` to finish them individually.
+
+---
+
+## 📍 The Genesis Alignment Engine
+The suite now features the **Genesis Global Anchor** algorithm. Unlike simple sentence matching, it:
+*   **Token Sliding**: Treats the entire 10-hour script as a single continuous timeline.
+*   **Cross-Sentence Logic**: Never misses words like "Kesannya" just because they cut across audio boundaries.
+*   **Genesis Anchoring**: Naturally finds your starting point anywhere in a million-word document, so you can start your sweep from any row in the table.
+
 
 ---
 
@@ -127,21 +140,24 @@ Every run creates a timestamped log file in the folder (e.g., `session_2024-04-1
 ## 🧰 Utility Toolkit (Diagnostics)
 Besides the main bot, this folder includes several diagnostic scripts used during development. These are useful if DingTalk updates their website and you need to "fix" the bot's eyes.
 
-*   `jump_first.js`: A specialized script that ONLY finds the first "0" and stops. Great for testing if the bot can see the table.
-*   `test_textbox.js`: Tests if the bot can correctly clear and type into the transcription box.
-*   `test_duration.js`: Tests the audio metadata polling (waiting for the waveform to load).
-*   `test_submit.js`: Tests the "Submit/Save" buttons.
-*   `inspector.js` & `inspect_wrapper.js`: Diagnostic tools to print out the technical details of the DingTalk UI.
-*   `fixer.js`: A script used to patch specific text issues in the dataset.
-*   `dump_table.js`: The most important diagnostic—run this if the bot is clicking the wrong columns.
+*   `preflight.js`: The "Scout" for rapid mass-extraction of ASR text.
+*   `mapper.js`: The "Aligner" using the Genesis Global Anchor engine.
+*   `ok_compare.js`: The "Auditor" for high-confidence final sweeps.
+*   `ok_single_task.js`: The "Surgical" fallback for individual IDs.
+*   `jump_first.js`: A specialized script that ONLY finds the first "0" and stops.
+*   `dump_table.js`: Use this if the bot is clicking the wrong columns.
 *   `logs/`: Contains `_human.log` (readable) and `_machine.jsonl` (for AI analysis).
 
 ---
 
 ## 📦 Project Structure
-*   `ok.js`: The main automation engine.
+*   `ok_compare.js`: The high-speed auditor used for final submission sweeps.
+*   `preflight.js`: Rapid raw-data extractor (no-edit mode).
+*   `mapper.js`: The continuous-timeline script alignment engine.
+*   `ok_single_task.js`: Surgical fallback tool for specific Task IDs.
 *   `chrome_launcher.js`: Opens Chrome in stealth mode for manual login.
-*   `scripts.txt`: Your source text dataset.
+*   `scripts_XXXXX.txt`: Your source text dataset for Project XXXXX.
+*   `review_XXXXX.txt`: The Human-In-The-Loop review file (The "Absolute Truth").
 *   `logs/`: Where your session history (Human and Machine formats) is saved.
 
 ## 🤝 For Collaborators (Sharing)
