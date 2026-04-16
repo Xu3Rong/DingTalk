@@ -34,26 +34,43 @@ const DRY_RUN = process.argv.includes('--dry-run');
 const BATCH_MODE = process.argv.includes('--batch');
 const SWEEP_MODE = process.argv.includes('--sweep');
 
-// ─── 2. CONFIG ────────────────────────────────────────────────────────────────
+// ─── 1. PERSONAL CONFIG (Tune here!) ──────────────────────────────────────────
+const USER_CONFIG = {
+  // 🎙️ Average words per second (Lower = slow speech, Higher = fast speech)
+  WORDS_PER_SECOND: 1.55,
+  
+  // 📏 How much "elasticity" to allow in length matching (3.5 = allows very slow speech)
+  LENGTH_TOLERANCE: 3.5,
+  
+  // 🖱️ Submit method (fill, type, clipboard)
+  PASTE_MODE: 'fill',
+  
+  // 📊 How many words to use for the fuzzy "Entry Point" and "Exit Point"
+  ANCHOR_SIZE: 6,
+  
+  // 🛡️ Confidence floors
+  HIGH_CONFIDENCE: 0.40,
+  LOW_CONFIDENCE: 0.24,
+  AMBIGUITY_GAP: 0.04,
+};
+
+// ─── 1.1 SYSTEM CONFIG ────────────────────────────────────────────────────────
 const CONFIG = {
   PROJECT_ID: '39649',
   CDP_URL: 'http://127.0.0.1:9222',
 
-  // ── Scorer thresholds (tune here, then copy to ok.js when happy) ──
-  HIGH_CONFIDENCE: 0.40,
-  LOW_CONFIDENCE: 0.24,
-  AMBIGUITY_GAP: 0.04,
-
-  // ── Duration / word-count ──
-  WORDS_PER_SECOND: 1.55,
-  LENGTH_TOLERANCE: 3.0, // Increased to allow "spanning" chunks to be considered
-
   // ── Lab display ──
   TOP_N_CANDIDATES: 3,
   SHOW_TRIM_WINDOWS: 5,
+
+  POLL_INTERVAL_MS: 500,
+  BEEP: '\u0007',
+
+  // Inherit from personal config
+  ...USER_CONFIG
 };
 
-// ─── 1. LOGGING (mirrors ok.js dual-log) ─────────────────────────────────────
+// ─── 2. LOGGING (mirrors ok.js dual-log) ─────────────────────────────────────
 const logDir = path.join(__dirname, 'logs');
 if (!fs.existsSync(logDir)) fs.mkdirSync(logDir);
 
@@ -61,17 +78,20 @@ const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 const humanLogFile = path.join(logDir, `lab_proj${CONFIG.PROJECT_ID}_${timestamp}_human.log`);
 const machineLogFile = path.join(logDir, `lab_proj${CONFIG.PROJECT_ID}_${timestamp}_machine.jsonl`);
 
-  /**
-   * PASTE_MODE — swap to compare paste strategies:
-   *   'fill'       → box.fill(text)                  [current ok.js method]
-   *   'type'       → box.type(text, {delay:18})       [character-by-character]
-   *   'clipboard'  → navigator.clipboard + Ctrl+V     [OS clipboard route]
-   */
-  PASTE_MODE: 'fill',
-
-  POLL_INTERVAL_MS: 500,
-  BEEP: '\u0007',
-};
+function log(msg, data = null) {
+  const time = new Date().toLocaleTimeString();
+  const line = `[${time}] ${msg}`;
+  console.log(line);
+  try {
+    fs.appendFileSync(humanLogFile, line + '\n', 'utf8');
+  } catch (_) { }
+  if (data) {
+    try {
+      const entry = JSON.stringify({ timestamp: new Date().toISOString(), ...data });
+      fs.appendFileSync(machineLogFile, entry + '\n', 'utf8');
+    } catch (_) { }
+  }
+}
 
 // ─── 3. SLEEP ─────────────────────────────────────────────────────────────────
 const sleep = (min, max = min) =>
@@ -213,6 +233,55 @@ function extractKeywords(normText) {
 }
 
 // ─── 8. FINGERPRINT SCORER (verbose sub-scores) ───────────────────────────────
+/**
+ * Calculates a fuzzy score for snippet 'anchors' (starts and ends).
+ * This finds the best potential entry/exit points inside the chunk.
+ */
+/**
+ * Calculates a fuzzy score for snippet 'anchors' (starts and ends).
+ * Uses an adaptive size (6 to 10 words) to verify entry/exit points.
+ */
+function getFuzzyAnchorScore(messyWords, chunkText, type = 'head') {
+  const sizes = [6, 10]; // Adaptive check: start small, scale up if needed
+  let bestGlobalSim = 0;
+
+  for (const size of sizes) {
+    if (messyWords.length < size) continue;
+    
+    const snippet = messyWords.slice(type === 'head' ? 0 : -size, type === 'head' ? size : undefined).join(' ');
+    const normSnippet = normalize(snippet);
+    const chunkWords = normalize(chunkText).split(/\s+/);
+    
+    if (chunkWords.length < size) continue;
+
+    let bestSizeSim = 0;
+    const searchRange = Math.max(size, Math.floor(chunkWords.length * 0.40));
+    
+    if (type === 'head') {
+      for (let i = 0; i <= searchRange; i++) {
+         const window = chunkWords.slice(i, i + size).join(' ');
+         const sim = stringSimilarity.compareTwoStrings(normSnippet, window);
+         if (sim > bestSizeSim) bestSizeSim = sim;
+         if (bestSizeSim > 0.95) break; 
+      }
+    } else {
+      const start = Math.max(0, chunkWords.length - searchRange - size);
+      for (let i = start; i <= chunkWords.length - size; i++) {
+         const window = chunkWords.slice(i, i + size).join(' ');
+         const sim = stringSimilarity.compareTwoStrings(normSnippet, window);
+         if (sim > bestSizeSim) bestSizeSim = sim;
+         if (bestSizeSim > 0.95) break;
+      }
+    }
+    
+    // We take the average or the best found across sizes
+    if (bestSizeSim > bestGlobalSim) bestGlobalSim = bestSizeSim;
+    if (bestGlobalSim > 0.90) break; // If 6 words are perfect, no need for 10
+  }
+  
+  return bestGlobalSim;
+}
+
 function scoreChunkVerbose(messy, chunk, normFn = normalize) {
   const nm = normFn(messy);
   const nc = normFn(chunk);
@@ -230,27 +299,23 @@ function scoreChunkVerbose(messy, chunk, normFn = normalize) {
   for (let i = 0; i < mArr.length - 1; i++)
     if (nc.includes(mArr.slice(i, i + 2).join(' '))) bi += 0.03;
 
-  // --- 5-WORD ANCHOR LOGIC ---
-  let anchor = 0;
-  if (mArr.length >= 6) {
-    // Start anchor (First 5 words) - High weight to fix mid-sentence starts
-    const start5 = mArr.slice(0, 5).join(' ');
-    if (nc.includes(start5)) anchor += 0.25;
-    else if (nc.includes(mArr.slice(0, 4).join(' '))) anchor += 0.15;
-
-    // End anchor (Last 5 words)
-    const end5 = mArr.slice(-5).join(' ');
-    if (nc.includes(end5)) anchor += 0.15;
-    else if (nc.includes(mArr.slice(-4).join(' '))) anchor += 0.10;
-  } else if (mArr.length >= 3) {
-    if (nc.includes(mArr.join(' '))) anchor += 0.40;
+  // --- ADAPTIVE FUZZY ANCHOR LOGIC ---
+  const headAnchor = getFuzzyAnchorScore(mArr, chunk, 'head');
+  const tailAnchor = getFuzzyAnchorScore(mArr, chunk, 'tail');
+  
+  // Balance Penalty: If Head matches but Tail is a total miss, it's not a tally!
+  let anchorAvg = (headAnchor + tailAnchor) / 2;
+  const imbalance = Math.abs(headAnchor - tailAnchor);
+  
+  if (imbalance > 0.5 || Math.min(headAnchor, tailAnchor) < 0.25) {
+     anchorAvg *= 0.40; // Heavy penalty for "One-sided" matches
   }
 
   const triCapped = Math.min(tri, 0.40);
   const biCapped = Math.min(bi, 0.15);
-  // Re-weighted to favor anchor and overlap over sim (which is affected by chunk length)
-  const total = overlap * 0.25 + sim * 0.10 + triCapped * 0.35 + biCapped * 0.10 + anchor * 0.20;
-  return { total, overlap, sim, trigram: triCapped, bigram: biCapped, anchor };
+  
+  const total = overlap * 0.25 + sim * 0.10 + triCapped * 0.30 + biCapped * 0.10 + anchorAvg * 0.25;
+  return { total, overlap, sim, trigram: triCapped, bigram: biCapped, anchor: anchorAvg, headAnchor, tailAnchor };
 }
 
 function scoreChunk(messy, chunk) {
@@ -266,20 +331,11 @@ function bestMatch(snippet, durationSec) {
   const candidates = [];
   const expWords = durationSec ? expectedWords(durationSec) : null;
 
-  // --- Create Spanning Chunks ---
-  const allChunks = [...cleanChunks];
-  for (let i = 0; i < cleanChunks.length - 1; i++) {
-    const combined = cleanChunks[i] + ' ' + cleanChunks[i + 1];
-    allChunks.push(combined);
-  }
-
-  for (const chunk of allChunks) {
-    // Filter too-short AND too-long chunks (bidirectional)
-    if (expWords) {
-      const cw = wordCount(chunk);
-      if (cw < expWords * 0.40) continue;
-      if (cw > expWords * CONFIG.LENGTH_TOLERANCE) continue;
-    }
+  for (let index = 0; index < cleanChunks.length; index++) {
+    const chunk = cleanChunks[index];
+    // [ELASTIC] Duration as a SIGNAL, not a hard disqualifier
+    const cw = wordCount(chunk);
+    if (expWords && (cw < expWords * 0.2 || cw > expWords * 5.0)) continue;
 
     const scores = scoreChunkVerbose(snippet, chunk);
 
@@ -296,7 +352,7 @@ function bestMatch(snippet, durationSec) {
     const strippedScores = scoreChunkVerbose(snippet, chunk, normalizeStripped);
     const strippedTotal = strippedScores.total + lengthBonus;
 
-    candidates.push({ chunk, strippedTotal, ...scores });
+    candidates.push({ chunk, index, strippedTotal, ...scores });
   }
 
   candidates.sort((a, b) => b.total - a.total);
@@ -307,7 +363,9 @@ function bestMatch(snippet, durationSec) {
   const second = candidates[1] || null;
 
   // Agreement check: does the same chunk win both scorers?
-  const strippedWinner = [...candidates].sort((a, b) => b.strippedTotal - a.strippedTotal)[0];
+  const strippedWinner = best.total < CONFIG.HIGH_CONFIDENCE
+    ? [...candidates].sort((a, b) => b.strippedTotal - a.strippedTotal)[0]
+    : candidates[0];
   const strippedAgrees = strippedWinner && strippedWinner.chunk === best.chunk;
 
   return {
@@ -318,42 +376,71 @@ function bestMatch(snippet, durationSec) {
   };
 }
 
-// ─── 11. ELASTIC TRIMMER (with [5] re-score diagnostic) ──────────────────────
+// ─── 11. HEAD-LOCK TRIMMER (with [5] re-score diagnostic) ────────────────────
+/**
+ * Finds where the snippet's head best aligns inside the chunk.
+ * Returns the best starting position and its confidence score.
+ */
+function findHeadAnchorPosition(snippetText, chunkWords) {
+  const normSnipHead = normalize(snippetText).split(/\s+/).slice(0, 5).join(' ');
+  const normChunk = chunkWords.map(w => normalize(w));
+
+  let bestSim = -1, bestPos = 0;
+  // Search the first 60% of the chunk to safely catch heads in longer spanning chunks
+  const searchLimit = Math.min(chunkWords.length - 5, Math.ceil(chunkWords.length * 0.60));
+
+  for (let i = 0; i <= searchLimit; i++) {
+    const win = normChunk.slice(i, i + 5).join(' ');
+    const sim = stringSimilarity.compareTwoStrings(normSnipHead, win);
+    if (sim > bestSim) { bestSim = sim; bestPos = i; }
+  }
+  return { pos: bestPos, confidence: bestSim };
+}
+
 function trimToSnippetLength(snippetText, matchedChunk, verbose = false) {
   const snippetWords = snippetText.trim().split(/\s+/);
   const chunkWords = matchedChunk.trim().split(/\s+/);
-
-  if (chunkWords.length <= Math.ceil(snippetWords.length * 1.1)) return matchedChunk;
 
   const normSnippet = normalize(snippetText);
   const snippetArr = normSnippet.split(/\s+/);
   const minLen = Math.max(1, Math.floor(snippetWords.length * 0.75));
   const maxLen = Math.min(chunkWords.length, Math.ceil(snippetWords.length * 1.35));
 
+  // HEAD-LOCK: Find where snippet starts in chunk
+  const { pos: anchorPos, confidence: anchorConf } = findHeadAnchorPosition(snippetText, chunkWords);
+
+  // Allow ±N positions around the anchor (tighter when confident)
+  const tolerance = anchorConf > 0.80 ? 1 : anchorConf > 0.55 ? 2 : 3;
+  const iMin = Math.max(0, anchorPos - tolerance);
+  const iMax = Math.min(anchorPos + tolerance, chunkWords.length - minLen);
+
+  if (verbose) {
+    log(`\n   🔒 Head-Lock: anchor at pos=${anchorPos} (conf=${anchorConf.toFixed(3)}), tolerance=±${tolerance}, search i=[${iMin}..${iMax}]`);
+  }
+
   const windows = [];
+
   for (let size = minLen; size <= maxLen; size++) {
-    for (let i = 0; i <= chunkWords.length - size; i++) {
+    for (let i = iMin; i <= iMax; i++) {
+      if (i + size > chunkWords.length) continue;
+
       const windowText = chunkWords.slice(i, i + size).join(' ');
       const normWin = normalize(windowText);
-      const winArr = normWin.split(/\s+/);
 
       let s = stringSimilarity.compareTwoStrings(normSnippet, normWin);
       let tri = 0;
       for (let j = 0; j < snippetArr.length - 2; j++)
         if (normWin.includes(snippetArr.slice(j, j + 3).join(' '))) tri += 0.05;
 
-      // Anchor bonus for trimming: does this window start/end with the right words?
-      let anchorBonus = 0;
-      if (snippetArr.length >= 3) {
-        // High bonus for exact start match
-        if (winArr[0] === snippetArr[0]) anchorBonus += 0.20;
-        else if (snippetArr[0].includes(winArr[0]) || winArr[0].includes(snippetArr[0])) anchorBonus += 0.10;
+      // Fuzzy Anchor Preservation
+      const headSim = getFuzzyAnchorScore(snippetArr, windowText, 'head');
+      const tailSim = getFuzzyAnchorScore(snippetArr, windowText, 'tail');
+      const anchorBonus = (headSim + tailSim) * 0.40;
 
-        // High bonus for exact end match
-        if (winArr[winArr.length - 1] === snippetArr[snippetArr.length - 1]) anchorBonus += 0.20;
-      }
+      // Penalize floating away from the detected anchor point
+      const distancePenalty = Math.abs(i - anchorPos) * 0.05;
 
-      windows.push({ score: s + Math.min(tri, 0.25) + anchorBonus, text: windowText, size, offset: i });
+      windows.push({ score: s + Math.min(tri, 0.25) + anchorBonus - distancePenalty, text: windowText, size, offset: i });
     }
   }
   windows.sort((a, b) => b.score - a.score);
@@ -718,20 +805,39 @@ async function analyseTask(page, interactive = true) {
   let mode = 'fallback (snippet as-is)';
   const preTrimScore = best.total;
 
-  if (best.total >= CONFIG.HIGH_CONFIDENCE) {
-    log(`\n   ✅ HIGH confidence (${best.total.toFixed(4)} ≥ ${CONFIG.HIGH_CONFIDENCE}). Trimming...`);
-    trimmedText = trimToSnippetLength(snippet, best.chunk, /* verbose= */ true);
-    finalText = trimmedText;
-    mode = 'high-confidence (elastic trimmed)';
+    // Decision logic
+    if (best.total >= CONFIG.HIGH_CONFIDENCE) {
+      log(`\n   ✅ HIGH confidence (${best.total.toFixed(4)} ≥ ${CONFIG.HIGH_CONFIDENCE}). Trimming...`);
+      trimmedText = trimToSnippetLength(snippet, best.chunk, /* verbose= */ true);
+      finalText = trimmedText;
+      mode = 'high-confidence (elastic trimmed)';
 
-    // Score-based Trim Revert: If trimming significantly lowers the match quality, revert.
-    const postTrimScore = scoreChunk(snippet, finalText);
-    if (postTrimScore < best.total - 0.02) {
-      log(`\n   ↩️ Trim lowered score significantly (${postTrimScore.toFixed(4)} vs ${best.total.toFixed(4)}). Reverting to full chunk.`);
-      finalText = formatForPasting(best.chunk);
-      mode = 'high-confidence (full chunk — trim reverted)';
-    }
-  } else if (best.total >= CONFIG.LOW_CONFIDENCE) {
+      // --- SMART TRIM REVERT (Anchor-Aware) ---
+      const postTrimScore = scoreChunk(snippet, finalText);
+      const expWords = expectedWords(clipDur);
+      const fullErr = Math.abs(wordCount(best.chunk) - expWords);
+      const trimErr = Math.abs(wordCount(finalText) - expWords);
+
+      const snippetArr = normalize(snippet).split(/\s+/);
+      const headSim = getFuzzyAnchorScore(snippetArr, finalText, 'head');
+      const tailSim = getFuzzyAnchorScore(snippetArr, finalText, 'tail');
+      const chunkHeadSim = getFuzzyAnchorScore(snippetArr, best.chunk, 'head');
+      const chunkTailSim = getFuzzyAnchorScore(snippetArr, best.chunk, 'tail');
+
+      const lostAnchor = (headSim < chunkHeadSim - 0.2) || (tailSim < chunkTailSim - 0.2);
+
+      if (lostAnchor) {
+        log(`   ↩️ Trim lost fuzzy anchors (H:${headSim.toFixed(2)} vs ${chunkHeadSim.toFixed(2)}, T:${tailSim.toFixed(2)} vs ${chunkTailSim.toFixed(2)}). Reverting.`);
+        finalText = formatForPasting(best.chunk);
+        mode = 'high-confidence (full chunk — trim reverted)';
+      } else if (postTrimScore < best.total - 0.05 && trimErr >= fullErr) {
+        log(`\n   ↩️ Trim lowered score significantly (${postTrimScore.toFixed(4)} vs ${best.total.toFixed(4)}) and length didn't improve. Reverting.`);
+        finalText = formatForPasting(best.chunk);
+        mode = 'high-confidence (full chunk — trim reverted)';
+      } else if (postTrimScore < best.total - 0.02) {
+        log(`\n   💡 Trim lowered similarity slightly, but length alignment improved (Err: ${trimErr} vs ${fullErr}). Keeping trim.`);
+      }
+    } else if (best.total >= CONFIG.LOW_CONFIDENCE) {
     log(`\n   ⚠️  LOW confidence (${best.total.toFixed(4)}). Using snippet as fallback.`);
     mode = 'low-confidence (snippet as-is)';
   } else {
