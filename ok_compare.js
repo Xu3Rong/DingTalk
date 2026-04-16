@@ -716,6 +716,7 @@ async function safeGoBack(page) {
   const sweepHistory = new Set();   // Memory of analyzed tasks in SWEEP mode
 
   let isVerifying = false; // "Sweep & Verify" state
+  const missingTasks = new Set();
   const sessionStats = {
     startTime: Date.now(),
     processed: 0,
@@ -797,6 +798,7 @@ async function safeGoBack(page) {
               oldID: taskID,
               newID: verifiedID
             });
+            missingTasks.add(taskID); // Failover: Record that the Table ID was phantom
             sweepHistory.add(taskID); // Block the "Wrong" ID from the table row
             taskID = verifiedID; // Update to the real ID
             sessionStats.mismatches++;
@@ -1017,6 +1019,7 @@ async function safeGoBack(page) {
               originalSnippet: snippet,
               pastedContent: finalPastedText
             });
+            missingTasks.delete(taskID); // If it was previously marked as missing, it's found now!
             sessionStats.processed++;
             await sleep(2000, 3000);
             processed = true;
@@ -1044,10 +1047,16 @@ async function safeGoBack(page) {
             log(`📊 Successes:  ${sessionStats.processed}`);
             log(`⏭️  Skipped:    ${sessionStats.skipped}`);
             log(`⚠️  Mismatches: ${sessionStats.mismatches}`);
+            
+            if (missingTasks.size > 0) {
+              log(`🕵️  MISSING TASKS: ${Array.from(missingTasks).join(', ')} (Skipped due to ID Mismatch)`);
+            }
+
             log(`⏳ Duration:   ${durationMin} minutes`);
             log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`, {
               event: "session_summary",
               ...sessionStats,
+              missingTasks: Array.from(missingTasks),
               durationMin
             });
 
