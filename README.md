@@ -51,7 +51,7 @@ node mapper.js
     *   `MAP`: The proposed script text.
     *   `CTX`: ±15 words of context (Head/Tail) for easy visual verification.
     *    note : right click the review_xxxxx.txt and Open in File Explorer, then select any tools eg : Notepad, to update and then save (ctrl + s).
-    *    So now, the review_xxxxx.txt is your one stop update, and the automation will be based on this script. You may manually update by looking at the head or tail, if it deviates too much use the TaskID to search (Ctrl + ) on the DingTalk Annotation platform to be sure, but make sure you search in the table view, not the side panel view. Alternatively, you can copy the whole thing to AI to tally the RAW and MAP. 
+    *    So now, the review_xxxxx.txt is your one stop update, and the automation will be based on this script. You may manually update by looking at the head or tail, if it deviates too much use the TaskID to search (Ctrl + S) on the DingTalk Annotation platform to be sure, but make sure you search in the table view, not the side panel view. Alternatively, you can copy the whole thing to AI to tally the RAW and MAP. 
 
 #### Step 3: The Audit (Final Submission)
 Automates the copy-pasting into the DingTalk UI.
