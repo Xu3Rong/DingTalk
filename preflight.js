@@ -90,16 +90,19 @@ async function getVerifiedTaskID(page) {
 
 const TEXTAREA_SEL = 'textarea[name="Annotation Result"]';
 async function readTextarea(page) {
-  log('   ⏳ Auditor reading transcript...');
-  for (let i = 0; i < 20; i++) {
+  log('   ⏳ Polling transcript content...');
+  for (let i = 0; i < 30; i++) {
     try {
-      await page.waitForSelector(TEXTAREA_SEL, { state: 'visible', timeout: 3000 });
+      await page.locator(TEXTAREA_SEL).first().waitFor({ state: 'visible', timeout: 5000 });
       let v = await page.locator(TEXTAREA_SEL).first().inputValue().catch(() => '');
       if (!v) v = await page.locator(TEXTAREA_SEL).first().textContent().catch(() => '');
+
       if (v && v.trim().length > 5) return v.trim();
     } catch (e) { }
+    process.stdout.write('.');
     await sleep(500);
   }
+  process.stdout.write('\n');
   return '';
 }
 
@@ -157,7 +160,8 @@ async function readTextarea(page) {
 
         const checkbox = row.locator('.lsf-select-row input, input[aria-label^="Select Task"]').first();
         const ariaLabel = await checkbox.getAttribute('aria-label').catch(() => '');
-        const taskID = ariaLabel ? ariaLabel.replace('Select Task ', '').trim() : 'Unknown';
+        let originalTaskID = ariaLabel ? ariaLabel.replace('Select Task ', '').trim() : 'Unknown';
+        let taskID = originalTaskID;
 
         // History check
         if (sweepHistory.has(taskID)) continue;
@@ -169,10 +173,6 @@ async function readTextarea(page) {
           await row.hover({ force: true }).catch(() => { });
           await sleep(200, 400);
 
-          // Mark as done immediately
-          sweepHistory.add(taskID);
-          lastTaskID = taskID;
-
           // Open Task (Identical Cell Click logic to ok.js)
           if (col1 === '0') await cells[1].dblclick({ force: true });
           else if (col2 === '0') await cells[2].dblclick({ force: true });
@@ -181,20 +181,32 @@ async function readTextarea(page) {
           await page.evaluate(() => window.getSelection().removeAllRanges()).catch(() => { });
 
           // Wait for UI
-          await page.waitForSelector('#waveform-layer-main', { timeout: 10000 }).catch(() => { });
+          await page.waitForSelector('#waveform-layer-main', { timeout: 15000 }).catch(() => { });
+
+          // --- VERIFY ID (The "Absolute Truth" fix) ---
+          const verifiedID = await getVerifiedTaskID(page);
+          if (verifiedID && verifiedID !== taskID) {
+            log(`   ⚠️ ID MISMATCH! Table said ${taskID}, but UI/URL confirms ${verifiedID}. Correcting...`);
+            sweepHistory.add(taskID); // Block the "Wrong" ID from the table row
+            taskID = verifiedID; // Update to the real ID
+          }
+          lastTaskID = taskID;
+          sweepHistory.add(taskID); // Block the "Verified" ID
           
           log("   ⏳ Polling audio metadata...");
           const durationInput = page.locator('[data-testid="timebox-end-time"] input').first();
           let rawDur = "";
           for (let i = 0; i < 40; i++) {
             rawDur = await durationInput.inputValue().catch(e => "");
-            if (rawDur && rawDur.length >= 5 && !rawDur.startsWith("00:00:00")) break;
+            if (rawDur && rawDur.length >= 5 && rawDur !== "00:00:00" && rawDur !== "00:00:00:000") break;
+            process.stdout.write(".");
             await sleep(500);
           }
+          log(""); // newline after dots
 
-          log(`   🖱️ Waveform click (Metadata: ${rawDur || 'None'})...`);
-          await page.click('#waveform-layer-main', { force: true, position: { x: 50, y: 50 } }).catch(() => { });
-          await sleep(2000, 3000); 
+          log(`   🖱️ Audio duration confirmed [${rawDur.trim() || 'None'}]. Clicking waveform...`);
+          await page.click('#waveform-layer-main').catch(() => { });
+          await sleep(1000, 1500);
           
           const snippet = await readTextarea(page);
 
