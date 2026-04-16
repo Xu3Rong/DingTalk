@@ -47,14 +47,11 @@ const CONFIG = {
 
 // ─── 1. LOGGING SETUP ────────────────────────────────────────────────────────
 const logDir = path.join(__dirname, 'logs');
-const verboseDir = path.join(logDir, 'verbose');
 if (!fs.existsSync(logDir)) fs.mkdirSync(logDir);
-if (!fs.existsSync(verboseDir)) fs.mkdirSync(verboseDir);
 
 const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 const humanLogFile = path.join(logDir, `proj${CONFIG.PROJECT_ID}_${timestamp}_human.log`);
 const machineLogFile = path.join(logDir, `proj${CONFIG.PROJECT_ID}_${timestamp}_machine.jsonl`);
-const verboseLogFile = path.join(verboseDir, `proj${CONFIG.PROJECT_ID}_${timestamp}_verbose.jsonl`);
 
 function log(msg, data = null) {
   const time = new Date().toLocaleTimeString();
@@ -66,28 +63,14 @@ function log(msg, data = null) {
     fs.appendFileSync(humanLogFile, line + '\n', 'utf8');
   } catch (err) { }
 
-  // 2. Machine Logs (JSONL)
+  // 2. Machine Log (JSONL)
   if (data) {
     try {
-      const timestampISO = new Date().toISOString();
-      
-      // A. Verbose Log: Save EVERYTHING
-      const verboseEntry = JSON.stringify({
-        timestamp: timestampISO,
-        message: msg,
+      const entry = JSON.stringify({
+        timestamp: new Date().toISOString(),
         ...data
       });
-      fs.appendFileSync(verboseLogFile, verboseEntry + '\n', 'utf8');
-
-      // B. Strict Log: Only actionable triplet for manual edits
-      if (data.originalSnippet || data.pastedContent) {
-        const strictEntry = JSON.stringify({
-          taskID: data.taskID,
-          originalSnippet: data.originalSnippet,
-          pastedContent: data.pastedContent
-        });
-        fs.appendFileSync(machineLogFile, strictEntry + '\n', 'utf8');
-      }
+      fs.appendFileSync(machineLogFile, entry + '\n', 'utf8');
     } catch (err) { }
   }
 }
@@ -145,7 +128,6 @@ async function scrollToTop(page, selector) {
 
 // ─── 1. LOAD & CHUNK SCRIPTS.TXT ──────────────────────────────────────────────
 let cleanChunks = [];
-let lastMatchedChunkIndex = -1;
 let currentProjectID = null;
 
 function loadScripts(projID) {
@@ -489,15 +471,15 @@ function bestMatch(snippet, durationSec) {
     const strippedScores = scoreChunkVerbose(snippet, chunk, normalizeStripped);
     const strippedTotal = strippedScores.total + lengthBonus;
 
-    candidates.push({ chunk, index, strippedTotal, ...scores });
+    candidates.push({ chunk, strippedTotal, ...scores });
   }
 
   candidates.sort((a, b) => b.total - a.total);
 
-  if (candidates.length === 0) return { best: 0, second: 0, gap: 0, chunk: '', secondChunk: '', strippedAgrees: false, index: -1, secondIndex: -1 };
+  if (candidates.length === 0) return { best: 0, second: 0, gap: 0, chunk: '', secondChunk: '', strippedAgrees: false };
 
   const best = candidates[0];
-  const second = candidates[1] || { total: 0, chunk: '', index: -1 };
+  const second = candidates[1] || { total: 0, chunk: '' };
 
   // Agreement check
   const strippedWinner = best.total < CONFIG.HIGH_CONFIDENCE
@@ -510,9 +492,7 @@ function bestMatch(snippet, durationSec) {
     second: second.total,
     gap: best.total - (second.total || 0),
     chunk: best.chunk,
-    index: best.index,
     secondChunk: second.chunk,
-    secondIndex: second.index,
     strippedAgrees
   };
 }
@@ -819,19 +799,12 @@ async function safeGoBack(page) {
           log(`   📋 FULL SNIPPET EXTRACTED:\n--------------------------------------------------\n${snippet}\n--------------------------------------------------`);
 
           // 3. MATCH AND TRIM
-          let { best, second, gap, chunk, index: matchIndex, secondChunk, secondIndex, strippedAgrees } = bestMatch(snippet, clipDur);
-
-          let matchModeLog = '';
-          if (lastMatchedChunkIndex !== -1 && Math.abs(matchIndex - lastMatchedChunkIndex) > 3 && best > CONFIG.HIGH_CONFIDENCE) {
-            matchModeLog = ` | 🦘 [Jump Detected: ${lastMatchedChunkIndex} -> ${matchIndex}]`;
-          }
-
-          log(`   📊 Score: ${best.toFixed(4)} | Gap: ${gap.toFixed(4)}${strippedAgrees ? ' | ✅ Stripped Agrees' : ' | ⚠️ Stripped Disagrees'}${matchModeLog}`, {
+          const { best, second, gap, chunk, secondChunk, strippedAgrees } = bestMatch(snippet, clipDur);
+          log(`   📊 Score: ${best.toFixed(4)} | Gap: ${gap.toFixed(4)}${strippedAgrees ? ' | ✅ Stripped Agrees' : ' | ⚠️ Stripped Disagrees'}`, {
             event: "match_calculation",
             taskID,
             bestScore: best,
             gap,
-            matchIndex,
             strippedAgrees
           });
 
@@ -851,24 +824,10 @@ async function safeGoBack(page) {
             if (sim12 > 0.40) {
               log(`   💡 Ambiguity ignored (Overlapping/Similar sentences, sim=${sim12.toFixed(3)}).`);
             } else {
-              // --- TIE-BREAKER MAGNET ---
-              log(`   🚨 AMBIGUOUS (Different sentences, gap=${gap.toFixed(4)}). Calculating Tie-Breaker...`);
-              
-              const distance1 = Math.abs(matchIndex - (lastMatchedChunkIndex + 1));
-              const distance2 = Math.abs(secondIndex - (lastMatchedChunkIndex + 1));
-
-              if (lastMatchedChunkIndex !== -1 && distance2 <= 3 && distance1 > 3) {
-                log(`   🧲 [MAGNET RESOLVED] Candidate 2 (${secondIndex}) logically aligns with Timeline (Last: ${lastMatchedChunkIndex}). Overriding Candidate 1 (${matchIndex})!`);
-                chunk = secondChunk;
-                matchIndex = secondIndex;
-                best = second; // Officially adopt the second score as victor
-              } else if (lastMatchedChunkIndex !== -1 && distance1 <= 3 && distance2 > 3) {
-                log(`   🧲 [MAGNET RESOLVED] Candidate 1 (${matchIndex}) logically aligns with Timeline (Last: ${lastMatchedChunkIndex}). Overriding Ambiguity pause!`);
-              } else {
-                isAmbiguous = true;
-                await pauseForReview(`No Timeline Resolution possible. Press Enter to skip.`);
-                await safeGoBack(page); processed = true; break;
-              }
+              log(`   🚨 AMBIGUOUS (Different sentences, gap=${gap.toFixed(4)}). Pausing.`);
+              isAmbiguous = true;
+              await pauseForReview(`Press Enter to skip.`);
+              await safeGoBack(page); processed = true; break;
             }
           }
 
@@ -936,17 +895,8 @@ async function safeGoBack(page) {
 
             log(`   📝 CONFIRMING PASTE CONTENT:\n--------------------------------------------------\n${finalPastedText}\n--------------------------------------------------`);
 
-            // [STATEFUL TRACKING] Update the bookmark for the next chronological task
-            if (matchIndex !== undefined && matchIndex !== -1) {
-              lastMatchedChunkIndex = matchIndex;
-            }
-
             if (DRY_RUN || SWEEP_MODE) {
-              log('\n   🔬 READ-ONLY (DRY RUN / SWEEP) — not pasting.', {
-                taskID,
-                originalSnippet: snippet,
-                pastedContent: finalPastedText
-              });
+              log('\n   🔬 READ-ONLY (DRY RUN / SWEEP) — not pasting.');
               if (SWEEP_MODE) {
                 await sleep(1500);
                 await page.keyboard.press('Escape').catch(() => { });
@@ -972,9 +922,9 @@ async function safeGoBack(page) {
             log('   🖱 Submitting...');
             await safeSubmit(page);
             log('   ✅ Submitted.', {
+              event: "submission_success",
               taskID,
-              originalSnippet: snippet,
-              pastedContent: finalPastedText
+              text: finalPastedText
             });
             sessionStats.processed++;
             await sleep(2000, 3000);
