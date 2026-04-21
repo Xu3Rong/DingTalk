@@ -15,16 +15,16 @@ const stringSimilarity = require('string-similarity');
 const USER_CONFIG = {
   // 🎙️ Average words per second (Lower = slow speech, Higher = fast speech)
   WORDS_PER_SECOND: 1.55,
-  
+
   // 📏 How much "elasticity" to allow in length matching (3.5 = allows very slow speech)
   LENGTH_TOLERANCE: 3.5,
-  
+
   // 🖱️ Submit method (fill, type, clipboard)
   PASTE_MODE: 'fill',
-  
+
   // 📊 How many words to use for the fuzzy "Entry Point" and "Exit Point"
   ANCHOR_SIZE: 6,
-  
+
   // 🛡️ Confidence floors
   HIGH_CONFIDENCE: 0.40,
   LOW_CONFIDENCE: 0.24,
@@ -33,14 +33,14 @@ const USER_CONFIG = {
 
 // ─── 0.1 SYSTEM CONFIG ────────────────────────────────────────────────────────
 const CONFIG = {
-  PROJECT_ID: '39649',
+  PROJECT_ID: '42652',
   get PROJECT_URL() { return `https://scale.dingtalk.com/projects/${this.PROJECT_ID}/data`; },
   CDP_URL: 'http://127.0.0.1:9222',
   TOP_N_CANDIDATES: 3,
   SHOW_TRIM_WINDOWS: 5,
   POLL_INTERVAL_MS: 1500,
   BEEP: '\u0007',
-  
+
   // Inherit from personal config
   ...USER_CONFIG
 };
@@ -70,7 +70,7 @@ function log(msg, data = null) {
   if (data) {
     try {
       const timestampISO = new Date().toISOString();
-      
+
       // A. Verbose Log: Save EVERYTHING
       const verboseEntry = JSON.stringify({
         timestamp: timestampISO,
@@ -158,14 +158,14 @@ function loadReviewMap() {
   const content = fs.readFileSync(mapPath, 'utf8');
   const lines = content.split('\n');
   let currentTaskID = null;
-  for(let i = 0; i < lines.length; i++) {
+  for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     if (line.startsWith('[Task ')) {
       currentTaskID = line.match(/\[Task (\d+)\]/)[1];
     } else if (line.startsWith('MAP : ') && currentTaskID) {
       const mapVal = line.replace('MAP : ', '').trim();
       if (mapVal !== '<PLEASE REVIEW>') {
-         precomputedMap.set(currentTaskID, mapVal);
+        precomputedMap.set(currentTaskID, mapVal);
       }
     }
   }
@@ -419,38 +419,38 @@ function getFuzzyAnchorScore(messyWords, chunkText, type = 'head') {
 
   for (const size of sizes) {
     if (messyWords.length < size) continue;
-    
+
     const snippet = messyWords.slice(type === 'head' ? 0 : -size, type === 'head' ? size : undefined).join(' ');
     const normSnippet = normalize(snippet);
     const chunkWords = normalize(chunkText).split(/\s+/);
-    
+
     if (chunkWords.length < size) continue;
 
     let bestSizeSim = 0;
     const searchRange = Math.max(size, Math.floor(chunkWords.length * 0.40));
-    
+
     if (type === 'head') {
       for (let i = 0; i <= searchRange; i++) {
-         const window = chunkWords.slice(i, i + size).join(' ');
-         const sim = stringSimilarity.compareTwoStrings(normSnippet, window);
-         if (sim > bestSizeSim) bestSizeSim = sim;
-         if (bestSizeSim > 0.95) break; 
+        const window = chunkWords.slice(i, i + size).join(' ');
+        const sim = stringSimilarity.compareTwoStrings(normSnippet, window);
+        if (sim > bestSizeSim) bestSizeSim = sim;
+        if (bestSizeSim > 0.95) break;
       }
     } else {
       const start = Math.max(0, chunkWords.length - searchRange - size);
       for (let i = start; i <= chunkWords.length - size; i++) {
-         const window = chunkWords.slice(i, i + size).join(' ');
-         const sim = stringSimilarity.compareTwoStrings(normSnippet, window);
-         if (sim > bestSizeSim) bestSizeSim = sim;
-         if (bestSizeSim > 0.95) break;
+        const window = chunkWords.slice(i, i + size).join(' ');
+        const sim = stringSimilarity.compareTwoStrings(normSnippet, window);
+        if (sim > bestSizeSim) bestSizeSim = sim;
+        if (bestSizeSim > 0.95) break;
       }
     }
-    
+
     // We take the average or the best found across sizes
     if (bestSizeSim > bestGlobalSim) bestGlobalSim = bestSizeSim;
     if (bestGlobalSim > 0.90) break; // If 6 words are perfect, no need for 10
   }
-  
+
   return bestGlobalSim;
 }
 
@@ -469,18 +469,18 @@ function scoreChunkVerbose(messy, chunk, normFn = normalize) {
   // --- ADAPTIVE FUZZY ANCHOR LOGIC ---
   const headAnchor = getFuzzyAnchorScore(mArr, chunk, 'head');
   const tailAnchor = getFuzzyAnchorScore(mArr, chunk, 'tail');
-  
+
   // Balance Penalty: If Head matches but Tail is a total miss, it's not a tally!
   let anchorAvg = (headAnchor + tailAnchor) / 2;
   const imbalance = Math.abs(headAnchor - tailAnchor);
-  
+
   if (imbalance > 0.5 || Math.min(headAnchor, tailAnchor) < 0.25) {
-     anchorAvg *= 0.40; // Heavy penalty for "One-sided" matches
+    anchorAvg *= 0.40; // Heavy penalty for "One-sided" matches
   }
 
   const triCapped = Math.min(tri, 0.40);
   const biCapped = Math.min(bi, 0.15);
-  
+
   const total = overlap * 0.25 + sim * 0.10 + triCapped * 0.30 + biCapped * 0.10 + anchorAvg * 0.25;
   return { total, overlap, sim, trigram: triCapped, bigram: biCapped, anchor: anchorAvg, headAnchor, tailAnchor };
 }
@@ -728,6 +728,7 @@ async function safeGoBack(page) {
 
   while (true) {
     try {
+
       const urlMatch = page.url().match(/projects\/(\d+)/);
       const projID = urlMatch ? urlMatch[1] : "unknown";
       if (projID !== currentProjectID) {
@@ -735,298 +736,359 @@ async function safeGoBack(page) {
         currentProjectID = projID;
       }
       await sleep(CONFIG.POLL_INTERVAL_MS);
-      const rows = await page.locator('.lsf-table-row').all();
       let processed = false;
+      let targetTaskID = null;
 
-      for (const row of rows) {
-        const cells = await row.locator('.lsf-table__cell').all();
-        if (cells.length < 2) continue;
+      // ─── LADDER CRAWLER (QUICK SIBLING JUMP) ───
+      const activeSelected = page.locator('.lsf-table__row-wrapper_selected').first();
+      if (await activeSelected.isVisible().catch(() => false)) {
+        const nextWrapper = page.locator('.lsf-table__row-wrapper_selected + .lsf-table__row-wrapper').first();
+        if (await nextWrapper.isVisible().catch(() => false)) {
+          const nextRow = nextWrapper.locator('.lsf-table-row').first();
+          const pCells = await nextRow.locator('.lsf-table__cell').all();
 
-        // --- ZERO-FINDER (Adopted from jump_first.js) ---
-        const col1 = (await cells[1].innerText().catch(() => '')).trim();
-        const col2 = cells.length > 2 ? (await cells[2].innerText().catch(() => '')).trim() : '';
+          if (pCells.length >= 2) {
+            const cell1 = await pCells[1].innerText().catch(() => '');
+            const cell2 = pCells.length > 2 ? await pCells[2].innerText().catch(() => '') : '';
 
-        // Exact locator from jump_first.js for the 10th column count
-        let col10 = '';
-        if (cells.length > 5) {
-          const countCell = row.locator('div:nth-child(10) > div');
-          if (await countCell.isVisible().catch(() => false)) {
-            col10 = (await countCell.innerText().catch(() => '')).trim();
+            if (cell1.trim() === '0' || cell2.trim() === '0') {
+              const checkbox = nextRow.locator('.lsf-select-row input, input[aria-label^="Select Task"]').first();
+              const ariaLabel = await checkbox.getAttribute('aria-label').catch(() => '');
+              let taskID = ariaLabel ? ariaLabel.replace('Select Task ', '').trim() : 'Unknown';
+
+              if (!sweepHistory.has(taskID) && taskID !== lastTaskID && !skippedTaskIDs.has(taskID)) {
+                log(`\n🪜 Climbing natively to next valid sibling (Task ${taskID})...`);
+
+                if (cell1.trim() === '0') await pCells[1].dblclick({ force: true }).catch(() => { });
+                else if (cell2.trim() === '0') await pCells[2].dblclick({ force: true }).catch(() => { });
+                else await nextRow.dblclick({ force: true }).catch(() => { });
+
+                await page.evaluate(() => window.getSelection().removeAllRanges()).catch(() => { });
+                targetTaskID = taskID;
+                processed = true;
+              }
+            }
           }
         }
+      }
 
-        const isZeroRow = col1 === '0' || col2 === '0' || col10 === '0';
-        if (!isZeroRow) continue;
+      // ─── FALLBACK SCANNER ───
+      if (!processed) {
+        const rows = await page.locator('.lsf-table-row').all();
 
+        for (let i = 0; i < rows.length; i++) {
+          const row = rows[i];
+          if (processed) break;
 
-        // Get Task ID
-        const checkbox = row.locator('.lsf-select-row input, input[aria-label^="Select Task"]').first();
-        const ariaLabel = await checkbox.getAttribute('aria-label').catch(() => '');
-        let originalTaskID = ariaLabel ? ariaLabel.replace('Select Task ', '').trim() : 'Unknown';
-        let taskID = originalTaskID;
+          const cells = await row.locator('.lsf-table__cell').all();
+          if (cells.length < 2) continue;
 
-        if (taskID !== lastTaskID && !skippedTaskIDs.has(taskID) && !sweepHistory.has(taskID)) {
-          log(`\n🎯 Task ${taskID} found. [col1='${col1}' col2='${col2}' col10='${col10}']`, {
-            event: "task_discovered",
-            taskID,
-            col1,
-            col2,
-            col10
-          });
+          // --- ZERO-FINDER (Adopted from jump_first.js) ---
+          const col1 = (await cells[1].innerText().catch(() => '')).trim();
+          const col2 = cells.length > 2 ? (await cells[2].innerText().catch(() => '')).trim() : '';
 
-          // --- "PRE-AIM" HUMANIZATION (Hover + Reaction Time) ---
-          await cells[1].hover({ force: true }).catch(() => { });
-          await sleep(200, 550); // Aiming/thinking time
-
-          // --- INTERACTION (Direct dblclick, NO internal delay, guaranteed to trigger UI) ---
-          if (col1 === '0') await cells[1].dblclick({ force: true });
-          else if (col2 === '0') await cells[2].dblclick({ force: true });
-          else await row.dblclick({ force: true });
-
-          await page.evaluate(() => window.getSelection().removeAllRanges()).catch(() => { });
-          lastTaskID = taskID;
-
-          // --- LOADING (Adopted from test_duration.js) ---
-          log("   ⏳ Waiting for Wrapper & Waveform UI to load...");
-          await page.waitForSelector('#waveform-layer-main', { timeout: 15000 }).catch(() => { });
-
-          // --- VERIFY ID (The "Absolute Truth" fix) ---
-          const verifiedID = await getVerifiedTaskID(page);
-          if (verifiedID && verifiedID !== taskID) {
-            log(`   ⚠️ ID MISMATCH! Table said ${taskID}, but UI/URL confirms ${verifiedID}. Correcting...`, {
-              event: "id_mismatch",
-              oldID: taskID,
-              newID: verifiedID
-            });
-            missingTasks.add(taskID); // Failover: Record that the Table ID was phantom
-            sweepHistory.add(taskID); // Block the "Wrong" ID from the table row
-            taskID = verifiedID; // Update to the real ID
-            sessionStats.mismatches++;
-          }
-          lastTaskID = taskID;
-          sweepHistory.add(taskID); // Block the "Verified" ID
-
-          log("   ⏳ Polling audio duration metadata...");
-          const durationInput = page.locator('[data-testid="timebox-end-time"] input').first();
-          let rawDur = "";
-          for (let i = 0; i < 40; i++) {
-            rawDur = await durationInput.inputValue().catch(e => "");
-            if (rawDur && rawDur.length >= 5 && rawDur !== "00:00:00" && rawDur !== "00:00:00:000") break;
-            process.stdout.write(".");
-            await sleep(500);
-          }
-          log(""); // newline after dots
-
-          // --- CLICK WAVEFORM (Natively, aligned with test_click.js) ---
-          log(`   🖱️ Audio duration confirmed [${rawDur.trim()}]. Clicking waveform...`);
-          await page.click('#waveform-layer-main').catch(() => { });
-          await sleep(1000, 1500);
-
-          // Check for Update button
-          if (await page.locator('button:has-text("Update")').isVisible().catch(() => false)) {
-            log("   ⏭️ Wrapper shows 'Update'! Task already done. Skipping.", {
-              event: "skipped_completed",
-              taskID
-            });
-            skippedTaskIDs.add(taskID);
-            sessionStats.skipped++;
-            await page.keyboard.press('Escape').catch(() => { });
-            await sleep(1000);
-            processed = true; break;
-          }
-
-          // 4. Parse the extracted Duration & Text
-          let clipDur = parseDuration(rawDur);
-          const snippet = await readTextarea(page);
-
-          if (!snippet || snippet.length < 5) {
-            log(`   ⚠ Textarea empty. Skipping.`);
-            await safeGoBack(page); processed = true; break;
-          }
-
-          log(`   📋 FULL SNIPPET EXTRACTED:\n--------------------------------------------------\n${snippet}\n--------------------------------------------------`);
-
-          let finalPastedText = "";
-          let mode = "";
-
-          // --- 3. PRECOMPUTED FAST-TRACK ---
-          if (precomputedMap.has(taskID)) {
-             finalPastedText = formatForPasting(precomputedMap.get(taskID));
-             mode = "precomputed map";
-             log(`   ⚡ FAST-TRACK: Task ${taskID} maps directly to review file. Bypassing scoring.`);
-          } else {
-             // 3.5 DYNAMIC MATCH AND TRIM (Fallback)
-             let { best, second, gap, chunk, index: matchIndex, secondChunk, secondIndex, strippedAgrees } = bestMatch(snippet, clipDur);
-
-             let matchModeLog = '';
-             if (lastMatchedChunkIndex !== -1 && Math.abs(matchIndex - lastMatchedChunkIndex) > 3 && best > CONFIG.HIGH_CONFIDENCE) {
-               matchModeLog = ` | 🦘 [Jump Detected: ${lastMatchedChunkIndex} -> ${matchIndex}]`;
-             }
-
-             log(`   📊 Score: ${best.toFixed(4)} | Gap: ${gap.toFixed(4)}${strippedAgrees ? ' | ✅ Stripped Agrees' : ' | ⚠️ Stripped Disagrees'}${matchModeLog}`, {
-               event: "match_calculation",
-               taskID,
-               bestScore: best,
-               gap,
-               matchIndex,
-               strippedAgrees
-             });
-
-             // Tally Check: Warning for the "p j kita" case
-             const results = scoreChunkVerbose(snippet, chunk);
-             if (results.headAnchor < 0.3 || results.tailAnchor < 0.3) {
-               log(`   ⚠️ TALLY WARNING: Anchor imbalance detected (H:${results.headAnchor.toFixed(2)}, T:${results.tailAnchor.toFixed(2)}). Possible ASR hallucination.`);
-               if (!SWEEP_MODE && !DRY_RUN) {
-                 await pauseForReview(`Anchor imbalance too high. Verify before pasting. Press Enter to skip.`);
-                 await safeGoBack(page); processed = true; continue;
-               }
-             }
-
-             let isAmbiguous = false;
-             if (best > CONFIG.LOW_CONFIDENCE && gap < CONFIG.AMBIGUITY_GAP) {
-               const sim12 = stringSimilarity.compareTwoStrings(normalize(chunk), normalize(secondChunk));
-               if (sim12 > 0.40) {
-                 log(`   💡 Ambiguity ignored (Overlapping/Similar sentences, sim=${sim12.toFixed(3)}).`);
-               } else {
-                 // --- TIE-BREAKER MAGNET ---
-                 log(`   🚨 AMBIGUOUS (Different sentences, gap=${gap.toFixed(4)}). Calculating Tie-Breaker...`);
-                 
-                 const distance1 = Math.abs(matchIndex - (lastMatchedChunkIndex + 1));
-                 const distance2 = Math.abs(secondIndex - (lastMatchedChunkIndex + 1));
-
-                 if (lastMatchedChunkIndex !== -1 && distance2 <= 3 && distance1 > 3) {
-                   log(`   🧲 [MAGNET RESOLVED] Candidate 2 (${secondIndex}) logically aligns with Timeline (Last: ${lastMatchedChunkIndex}). Overriding Candidate 1 (${matchIndex})!`);
-                   chunk = secondChunk;
-                   matchIndex = secondIndex;
-                   best = second;
-                 } else if (lastMatchedChunkIndex !== -1 && distance1 <= 3 && distance2 > 3) {
-                   log(`   🧲 [MAGNET RESOLVED] Candidate 1 (${matchIndex}) logically aligns with Timeline (Last: ${lastMatchedChunkIndex}). Overriding Ambiguity pause!`);
-                 } else {
-                   isAmbiguous = true;
-                   await pauseForReview(`No Timeline Resolution possible. Press Enter to skip.`);
-                   await safeGoBack(page); processed = true; continue;
-                 }
-               }
-             }
-
-             if (!isAmbiguous && (best >= CONFIG.LOW_CONFIDENCE || SWEEP_MODE)) {
-                finalPastedText = formatForPasting(snippet);
-                mode = "low-confidence fallback";
-
-              if (best >= CONFIG.HIGH_CONFIDENCE) {
-                const trimmed = trimToSnippetLength(snippet, chunk);
-                finalPastedText = formatForPasting(trimmed);
-                mode = "high-confidence (trimmed)";
-
-                // --- SMART TRIM REVERT (Anchor-Aware) ---
-                const postTrimScore = scoreChunk(snippet, trimmed);
-                const expWords = expectedWords(clipDur);
-                const fullErr = Math.abs(wordCount(chunk) - expWords);
-                const trimErr = Math.abs(wordCount(trimmed) - expWords);
-
-                // Fuzzy anchor check: did trimming lose our lock on the beginning or end?
-                const snippetArr = normalize(snippet).split(/\s+/);
-                const headSim = getFuzzyAnchorScore(snippetArr, trimmed, 'head');
-                const tailSim = getFuzzyAnchorScore(snippetArr, trimmed, 'tail');
-                const chunkHeadSim = getFuzzyAnchorScore(snippetArr, chunk, 'head');
-                const chunkTailSim = getFuzzyAnchorScore(snippetArr, chunk, 'tail');
-
-                const lostAnchor = (headSim < chunkHeadSim - 0.2) || (tailSim < chunkTailSim - 0.2);
-
-                // Revert ONLY if (similarity dropped significantly AND length match didn't improve) OR anchor was lost
-                if (lostAnchor) {
-                  log(`   ↩️ Trim lost fuzzy anchors (H:${headSim.toFixed(2)} vs ${chunkHeadSim.toFixed(2)}, T:${tailSim.toFixed(2)} vs ${chunkTailSim.toFixed(2)}). Reverting.`);
-                  finalPastedText = formatForPasting(chunk);
-                  mode = "high-confidence (full chunk — trim reverted)";
-                } else if (postTrimScore < best - 0.05 && trimErr >= fullErr) {
-                  log(`   ↩️ Trim lowered score significantly (${postTrimScore.toFixed(4)} vs ${best.toFixed(4)}) and length didn't improve. Reverting.`);
-                  finalPastedText = formatForPasting(chunk);
-                  mode = "high-confidence (full chunk — trim reverted)";
-                } else if (postTrimScore < best - 0.02) {
-                  log(`   💡 Trim lowered similarity slightly, but length alignment improved (Err: ${trimErr} vs ${fullErr}). Keeping trim.`);
-                }
-              }
-
-              const sanity = sanityCheck(finalPastedText, clipDur);
-              if (!sanity.ok) {
-                log(`   🚨 Sanity Check Failed: ${sanity.reason}`);
-
-                // Auto-revert: if trim was too aggressive, try the full un-trimmed chunk
-                if (mode.includes('trimmed') && finalPastedText !== snippet) {
-                  const fullSanity = sanityCheck(chunk, clipDur);
-                  const errTrim = Math.abs(wordCount(finalPastedText) - expectedWords(clipDur));
-                  const errFull = Math.abs(wordCount(chunk) - expectedWords(clipDur));
-                  if (fullSanity.ok || errFull < errTrim) {
-                    log(`   ↩️ Reverting to full un-trimmed chunk (better duration match).`);
-                    finalPastedText = chunk;
-                    mode = 'high-confidence (full chunk — trim reverted)';
-                  } else {
-                    await pauseForReview(`Sanity failed and trim revert didn't help. Press Enter to skip.`);
-                    await safeGoBack(page); processed = true; continue;
-                  }
-                } else {
-                  await pauseForReview(`Sanity failed. Press Enter to skip.`);
-                  await safeGoBack(page); processed = true; continue;
-                }
-              }
-
-              // [STATEFUL TRACKING] Update the bookmark for the next chronological task
-              if (matchIndex !== undefined && matchIndex !== -1) {
-                lastMatchedChunkIndex = matchIndex;
-              }
-             } else if (!isAmbiguous && !SWEEP_MODE) {
-                log(`   ❌ LOW CONFIDENCE. Skipping.`);
-                await safeGoBack(page); processed = true; continue;
-             }
-          } // === END OF DYNAMIC MATCHING ===
-
-          if (!finalPastedText && !SWEEP_MODE) continue;
-
-          log(`   📝 CONFIRMING PASTE CONTENT:\n--------------------------------------------------\n${finalPastedText}\n--------------------------------------------------`);
-
-            if (DRY_RUN || SWEEP_MODE) {
-              log('\n   🔬 READ-ONLY (DRY RUN / SWEEP) — not pasting.', {
-                taskID,
-                originalSnippet: snippet,
-                pastedContent: finalPastedText
-              });
-              if (SWEEP_MODE) {
-                await sleep(1500);
-                await page.keyboard.press('Escape').catch(() => { });
-                await sleep(1000);
-                sweepHistory.add(taskID); // Remember we saw this!
-                processed = true; break;
-              }
-              // For standalone dry-run, we just stop here
-              process.exit(0);
+          let col10 = '';
+          if (cells.length > 5) {
+            const countCell = row.locator('div:nth-child(10) > div');
+            if (await countCell.isVisible().catch(() => false)) {
+              col10 = (await countCell.innerText().catch(() => '')).trim();
             }
+          }
 
-            await pasteText(page, finalPastedText);
+          const isZeroRow = col1 === '0' || col2 === '0' || col10 === '0';
+          if (!isZeroRow) continue;
 
-            // Humanize: Add random 'lost focus' staring delay
-            const staringJitter = Math.floor(Math.random() * 4000) + 1500;
-            const reviewTime = Math.max(3000, wordCount(finalPastedText) * 200) + staringJitter;
-            log(`   🤔 Added Human Staring Jitter: +${(staringJitter / 1000).toFixed(1)}s`);
-            log(`   ⏳ Review pause: ${(reviewTime / 1000).toFixed(1)}s...`);
-            await sleep(reviewTime, reviewTime + 1000);
+          // --- MEMORY EXTRACTION (FAST SKIP) ---
+          const checkbox = row.locator('.lsf-select-row input, input[aria-label^="Select Task"]').first();
+          const ariaLabel = await checkbox.getAttribute('aria-label').catch(() => '');
+          let taskID = ariaLabel ? ariaLabel.replace('Select Task ', '').trim() : 'Unknown';
 
-            log('   ⏳ WAITING 3 SECONDS... PRESS CTRL+C NOW TO CANCEL IF WRONG!');
-            await sleep(3000);
-            log('   🖱 Submitting...');
-            await safeSubmit(page);
-            log('   ✅ Submitted.', {
+          if (taskID === lastTaskID || skippedTaskIDs.has(taskID) || sweepHistory.has(taskID)) continue;
+
+          // --- PRE-AIM & DOM STABILITY FIX ---
+          await cells[1].hover({ force: true }).catch(() => { });
+          await sleep(350, 650);
+
+          const stableCol1 = (await cells[1].innerText().catch(() => '')).trim();
+          const stableCol2 = cells.length > 2 ? (await cells[2].innerText().catch(() => '')).trim() : '';
+          let stableCol10 = '';
+          if (cells.length > 5) {
+            const countCell = row.locator('div:nth-child(10) > div');
+            if (await countCell.isVisible().catch(() => false)) {
+              stableCol10 = (await countCell.innerText().catch(() => '')).trim();
+            }
+          }
+
+          const isStableZero = stableCol1 === '0' || stableCol2 === '0' || stableCol10 === '0';
+          if (!isStableZero) continue;
+
+          if (true) {
+            log(`\n🎯 Task ${taskID} found. [col1='${stableCol1}' col2='${stableCol2}' col10='${stableCol10}']`, {
+              event: "task_discovered",
               taskID,
-              originalSnippet: snippet,
-              pastedContent: finalPastedText
+              col1: stableCol1,
+              col2: stableCol2,
+              col10: stableCol10
             });
-            missingTasks.delete(taskID); // If it was previously marked as missing, it's found now!
-            sessionStats.processed++;
-            await sleep(2000, 3000);
+
+            // --- INTERACTION ---
+            if (stableCol1 === '0') await cells[1].dblclick({ force: true });
+            else if (stableCol2 === '0') await cells[2].dblclick({ force: true });
+            else await row.dblclick({ force: true });
+
+            await page.evaluate(() => window.getSelection().removeAllRanges()).catch(() => { });
+            lastTaskID = taskID;
+            targetTaskID = taskID;
             processed = true;
-            isVerifying = false; // Reset verification if we found something
             break;
           }
         }
+      }
+
+      // ─── UNIFIED TASK PROCESSOR ───
+      if (processed && targetTaskID) {
+        log(`\n🎯 Task ${targetTaskID} found and opened...`);
+
+        // --- LOADING (Adopted from test_duration.js) ---
+        log("   ⏳ Waiting for Wrapper & Waveform UI to load...");
+        await page.waitForSelector('#waveform-layer-main', { timeout: 15000 }).catch(() => { });
+
+        // --- VERIFY ID (The "Absolute Truth" fix) ---
+        const verifiedID = await getVerifiedTaskID(page);
+        if (verifiedID && verifiedID !== targetTaskID) {
+          log(`   ⚠️ ID MISMATCH! Table said ${targetTaskID}, but UI/URL confirms ${verifiedID}. Correcting...`, {
+            event: "id_mismatch",
+            oldID: targetTaskID,
+            newID: verifiedID
+          });
+          missingTasks.add(targetTaskID); // Failover: Record that the Table ID was phantom
+          sweepHistory.add(targetTaskID); // Block the "Wrong" ID from the table row
+          targetTaskID = verifiedID; // Update to the real ID
+          sessionStats.mismatches++;
+        }
+        lastTaskID = targetTaskID;
+        sweepHistory.add(targetTaskID); // Block the "Verified" ID
+
+        log("   ⏳ Polling audio duration metadata...");
+        const durationInput = page.locator('[data-testid="timebox-end-time"] input').first();
+        let rawDur = "";
+        for (let i = 0; i < 40; i++) {
+          rawDur = await durationInput.inputValue().catch(e => "");
+          if (rawDur && rawDur.length >= 5 && rawDur !== "00:00:00" && rawDur !== "00:00:00:000") break;
+          process.stdout.write(".");
+          await sleep(500);
+        }
+        log(""); // newline after dots
+
+        // --- CLICK WAVEFORM (Natively, aligned with test_click.js) ---
+        log(`   🖱️ Audio duration confirmed [${rawDur.trim()}]. Clicking waveform...`);
+        await page.click('#waveform-layer-main').catch(() => { });
+        await sleep(1000, 1500);
+
+        // Check for Update button
+        if (await page.locator('button:has-text("Update")').isVisible().catch(() => false)) {
+          log("   ⏭️ Wrapper shows 'Update'! Task already done. Skipping.", {
+            event: "skipped_completed",
+            taskID: targetTaskID
+          });
+          skippedTaskIDs.add(targetTaskID);
+          sessionStats.skipped++;
+
+          await sleep(1000);
+          processed = true; continue;
+        }
+
+        // 4. Parse the extracted Duration & Text
+        let clipDur = parseDuration(rawDur);
+        const snippet = await readTextarea(page);
+
+        if (!snippet || snippet.length < 5) {
+          log(`   ⚠ Textarea empty. Skipping.`);
+          await safeGoBack(page); processed = true; continue;
+        }
+
+        log(`   📋 FULL SNIPPET EXTRACTED:\n--------------------------------------------------\n${snippet}\n--------------------------------------------------`);
+
+        let finalPastedText = "";
+        let mode = "";
+
+        // --- 3. PRECOMPUTED FAST-TRACK ---
+        if (precomputedMap.has(targetTaskID)) {
+          finalPastedText = formatForPasting(precomputedMap.get(targetTaskID));
+          mode = "precomputed map";
+          log(`   ⚡ FAST-TRACK: Task ${targetTaskID} maps directly to review file. Bypassing scoring.`);
+        } else {
+          // 3.5 DYNAMIC MATCH AND TRIM (Fallback)
+          let { best, second, gap, chunk, index: matchIndex, secondChunk, secondIndex, strippedAgrees } = bestMatch(snippet, clipDur);
+
+          let matchModeLog = '';
+          if (lastMatchedChunkIndex !== -1 && Math.abs(matchIndex - lastMatchedChunkIndex) > 3 && best > CONFIG.HIGH_CONFIDENCE) {
+            matchModeLog = ` | 🦘 [Jump Detected: ${lastMatchedChunkIndex} -> ${matchIndex}]`;
+          }
+
+          log(`   📊 Score: ${best.toFixed(4)} | Gap: ${gap.toFixed(4)}${strippedAgrees ? ' | ✅ Stripped Agrees' : ' | ⚠️ Stripped Disagrees'}${matchModeLog}`, {
+            event: "match_calculation",
+            taskID: targetTaskID,
+            bestScore: best,
+            gap,
+            matchIndex,
+            strippedAgrees
+          });
+
+          // Tally Check: Warning for the "p j kita" case
+          const results = scoreChunkVerbose(snippet, chunk);
+          if (results.headAnchor < 0.3 || results.tailAnchor < 0.3) {
+            log(`   ⚠️ TALLY WARNING: Anchor imbalance detected (H:${results.headAnchor.toFixed(2)}, T:${results.tailAnchor.toFixed(2)}). Possible ASR hallucination.`);
+            if (!SWEEP_MODE && !DRY_RUN) {
+              await pauseForReview(`Anchor imbalance too high. Verify before pasting. Press Enter to skip.`);
+              await safeGoBack(page); processed = true; continue;
+            }
+          }
+
+          let isAmbiguous = false;
+          if (best > CONFIG.LOW_CONFIDENCE && gap < CONFIG.AMBIGUITY_GAP) {
+            const sim12 = stringSimilarity.compareTwoStrings(normalize(chunk), normalize(secondChunk));
+            if (sim12 > 0.40) {
+              log(`   💡 Ambiguity ignored (Overlapping/Similar sentences, sim=${sim12.toFixed(3)}).`);
+            } else {
+              // --- TIE-BREAKER MAGNET ---
+              log(`   🚨 AMBIGUOUS (Different sentences, gap=${gap.toFixed(4)}). Calculating Tie-Breaker...`);
+
+              const distance1 = Math.abs(matchIndex - (lastMatchedChunkIndex + 1));
+              const distance2 = Math.abs(secondIndex - (lastMatchedChunkIndex + 1));
+
+              if (lastMatchedChunkIndex !== -1 && distance2 <= 3 && distance1 > 3) {
+                log(`   🧲 [MAGNET RESOLVED] Candidate 2 (${secondIndex}) logically aligns with Timeline (Last: ${lastMatchedChunkIndex}). Overriding Candidate 1 (${matchIndex})!`);
+                chunk = secondChunk;
+                matchIndex = secondIndex;
+                best = second;
+              } else if (lastMatchedChunkIndex !== -1 && distance1 <= 3 && distance2 > 3) {
+                log(`   🧲 [MAGNET RESOLVED] Candidate 1 (${matchIndex}) logically aligns with Timeline (Last: ${lastMatchedChunkIndex}). Overriding Ambiguity pause!`);
+              } else {
+                isAmbiguous = true;
+                await pauseForReview(`No Timeline Resolution possible. Press Enter to skip.`);
+                await safeGoBack(page); processed = true; continue;
+              }
+            }
+          }
+
+          if (!isAmbiguous && (best >= CONFIG.LOW_CONFIDENCE || SWEEP_MODE)) {
+            finalPastedText = formatForPasting(snippet);
+            mode = "low-confidence fallback";
+
+            if (best >= CONFIG.HIGH_CONFIDENCE) {
+              const trimmed = trimToSnippetLength(snippet, chunk);
+              finalPastedText = formatForPasting(trimmed);
+              mode = "high-confidence (trimmed)";
+
+              // --- SMART TRIM REVERT (Anchor-Aware) ---
+              const postTrimScore = scoreChunk(snippet, trimmed);
+              const expWords = expectedWords(clipDur);
+              const fullErr = Math.abs(wordCount(chunk) - expWords);
+              const trimErr = Math.abs(wordCount(trimmed) - expWords);
+
+              // Fuzzy anchor check: did trimming lose our lock on the beginning or end?
+              const snippetArr = normalize(snippet).split(/\s+/);
+              const headSim = getFuzzyAnchorScore(snippetArr, trimmed, 'head');
+              const tailSim = getFuzzyAnchorScore(snippetArr, trimmed, 'tail');
+              const chunkHeadSim = getFuzzyAnchorScore(snippetArr, chunk, 'head');
+              const chunkTailSim = getFuzzyAnchorScore(snippetArr, chunk, 'tail');
+
+              const lostAnchor = (headSim < chunkHeadSim - 0.2) || (tailSim < chunkTailSim - 0.2);
+
+              // Revert ONLY if (similarity dropped significantly AND length match didn't improve) OR anchor was lost
+              if (lostAnchor) {
+                log(`   ↩️ Trim lost fuzzy anchors (H:${headSim.toFixed(2)} vs ${chunkHeadSim.toFixed(2)}, T:${tailSim.toFixed(2)} vs ${chunkTailSim.toFixed(2)}). Reverting.`);
+                finalPastedText = formatForPasting(chunk);
+                mode = "high-confidence (full chunk — trim reverted)";
+              } else if (postTrimScore < best - 0.05 && trimErr >= fullErr) {
+                log(`   ↩️ Trim lowered score significantly (${postTrimScore.toFixed(4)} vs ${best.toFixed(4)}) and length didn't improve. Reverting.`);
+                finalPastedText = formatForPasting(chunk);
+                mode = "high-confidence (full chunk — trim reverted)";
+              } else if (postTrimScore < best - 0.02) {
+                log(`   💡 Trim lowered similarity slightly, but length alignment improved (Err: ${trimErr} vs ${fullErr}). Keeping trim.`);
+              }
+            }
+
+            const sanity = sanityCheck(finalPastedText, clipDur);
+            if (!sanity.ok) {
+              log(`   🚨 Sanity Check Failed: ${sanity.reason}`);
+
+              // Auto-revert: if trim was too aggressive, try the full un-trimmed chunk
+              if (mode.includes('trimmed') && finalPastedText !== snippet) {
+                const fullSanity = sanityCheck(chunk, clipDur);
+                const errTrim = Math.abs(wordCount(finalPastedText) - expectedWords(clipDur));
+                const errFull = Math.abs(wordCount(chunk) - expectedWords(clipDur));
+                if (fullSanity.ok || errFull < errTrim) {
+                  log(`   ↩️ Reverting to full un-trimmed chunk (better duration match).`);
+                  finalPastedText = chunk;
+                  mode = 'high-confidence (full chunk — trim reverted)';
+                } else {
+                  await pauseForReview(`Sanity failed and trim revert didn't help. Press Enter to skip.`);
+                  await safeGoBack(page); processed = true; continue;
+                }
+              } else {
+                await pauseForReview(`Sanity failed. Press Enter to skip.`);
+                await safeGoBack(page); processed = true; continue;
+              }
+            }
+
+            // [STATEFUL TRACKING] Update the bookmark for the next chronological task
+            if (matchIndex !== undefined && matchIndex !== -1) {
+              lastMatchedChunkIndex = matchIndex;
+            }
+          } else if (!isAmbiguous && !SWEEP_MODE) {
+            log(`   ❌ LOW CONFIDENCE. Skipping.`);
+            await safeGoBack(page); processed = true; continue;
+          }
+        } // === END OF DYNAMIC MATCHING ===
+
+        if (!finalPastedText && !SWEEP_MODE) continue;
+
+        log(`   📝 CONFIRMING PASTE CONTENT:\n--------------------------------------------------\n${finalPastedText}\n--------------------------------------------------`);
+
+        if (DRY_RUN || SWEEP_MODE) {
+          log('\n   🔬 READ-ONLY (DRY RUN / SWEEP) — not pasting.', {
+            taskID: targetTaskID,
+            originalSnippet: snippet,
+            pastedContent: finalPastedText
+          });
+          if (SWEEP_MODE) {
+            await sleep(1500);
+            await page.keyboard.press('Escape').catch(() => { });
+            await sleep(1000);
+            sweepHistory.add(targetTaskID); // Remember we saw this!
+            processed = true; continue;
+          }
+          // For standalone dry-run, we just stop here
+          process.exit(0);
+        }
+
+        await pasteText(page, finalPastedText);
+
+        // Humanize: Add random 'lost focus' staring delay
+        const staringJitter = Math.floor(Math.random() * 4000) + 1500;
+        const reviewTime = Math.max(3000, wordCount(finalPastedText) * 200) + staringJitter;
+        log(`   🤔 Added Human Staring Jitter: +${(staringJitter / 1000).toFixed(1)}s`);
+        log(`   ⏳ Review pause: ${(reviewTime / 1000).toFixed(1)}s...`);
+        await sleep(reviewTime, reviewTime + 1000);
+
+        log('   ⏳ WAITING 3 SECONDS... PRESS CTRL+C NOW TO CANCEL IF WRONG!');
+        await sleep(3000);
+        log('   🖱 Submitting...');
+        await safeSubmit(page);
+        log('   ✅ Submitted.', {
+          taskID: targetTaskID,
+          originalSnippet: snippet,
+          pastedContent: finalPastedText
+        });
+        missingTasks.delete(targetTaskID); // If it was previously marked as missing, it's found now!
+        sessionStats.processed++;
+        await sleep(2000, 3000);
+        processed = true;
+        isVerifying = false; // Reset verification if we found something
+        continue;
+      }
       // --- COMPLETION DETECTION ('Sweep & Verify' logic) ---
       if (!processed) {
         const atBottom = await isScrollerAtBottom(page, TABLE_SCROLLER);
@@ -1047,7 +1109,7 @@ async function safeGoBack(page) {
             log(`📊 Successes:  ${sessionStats.processed}`);
             log(`⏭️  Skipped:    ${sessionStats.skipped}`);
             log(`⚠️  Mismatches: ${sessionStats.mismatches}`);
-            
+
             if (missingTasks.size > 0) {
               log(`🕵️  MISSING TASKS: ${Array.from(missingTasks).join(', ')} (Skipped due to ID Mismatch)`);
             }

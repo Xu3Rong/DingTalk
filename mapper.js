@@ -10,7 +10,7 @@ const path = require('path');
 const stringSimilarity = require('string-similarity');
 
 const CONFIG = {
-  PROJECT_ID: '39649',
+  PROJECT_ID: '42652',
   HIGH_CONFIDENCE: 0.40,  // Exact scale from ok.js
   LOW_CONFIDENCE: 0.24,   // Exact scale from ok.js
 };
@@ -62,18 +62,18 @@ function getFuzzyAnchorScore(snippetArr, chunkText, type = 'head') {
     const searchRange = Math.max(size, Math.floor(chunkWords.length * 0.40));
     if (type === 'head') {
       for (let i = 0; i <= searchRange; i++) {
-         const window = chunkWords.slice(i, i + size).join(' ');
-         const sim = stringSimilarity.compareTwoStrings(normSnippet, window);
-         if (sim > bestSizeSim) bestSizeSim = sim;
-         if (bestSizeSim > 0.95) break; 
+        const window = chunkWords.slice(i, i + size).join(' ');
+        const sim = stringSimilarity.compareTwoStrings(normSnippet, window);
+        if (sim > bestSizeSim) bestSizeSim = sim;
+        if (bestSizeSim > 0.95) break;
       }
     } else {
       const start = Math.max(0, chunkWords.length - searchRange - size);
       for (let i = start; i <= chunkWords.length - size; i++) {
-         const window = chunkWords.slice(i, i + size).join(' ');
-         const sim = stringSimilarity.compareTwoStrings(normSnippet, window);
-         if (sim > bestSizeSim) bestSizeSim = sim;
-         if (bestSizeSim > 0.95) break;
+        const window = chunkWords.slice(i, i + size).join(' ');
+        const sim = stringSimilarity.compareTwoStrings(normSnippet, window);
+        if (sim > bestSizeSim) bestSizeSim = sim;
+        if (bestSizeSim > 0.95) break;
       }
     }
     if (bestSizeSim > bestGlobalSim) bestGlobalSim = bestSizeSim;
@@ -93,14 +93,14 @@ function scoreChunkVerbose(nm, nc, snippetArr) {
 
   const headAnchor = getFuzzyAnchorScore(snippetArr, nc, 'head');
   const tailAnchor = getFuzzyAnchorScore(snippetArr, nc, 'tail');
-  
+
   let anchorAvg = (headAnchor + tailAnchor) / 2;
   const imbalance = Math.abs(headAnchor - tailAnchor);
-  if (imbalance > 0.5 || Math.min(headAnchor, tailAnchor) < 0.25) anchorAvg *= 0.40; 
+  if (imbalance > 0.5 || Math.min(headAnchor, tailAnchor) < 0.25) anchorAvg *= 0.40;
 
   const triCapped = Math.min(tri, 0.40);
   const biCapped = Math.min(bi, 0.15);
-  
+
   return overlap * 0.25 + sim * 0.10 + triCapped * 0.30 + biCapped * 0.10 + anchorAvg * 0.25;
 }
 
@@ -122,15 +122,15 @@ function loadScripts(projID) {
 }
 
 function findGlobalHead(normSnipHeadArr) {
-   const normSnipHead = normSnipHeadArr.join(' ');
-   let bestSim = -1, bestIndex = 0;
-   // Jump by 2 words for speed across the entire document
-   for (let i = 0; i <= masterWordsNorm.length - 5; i += 2) {
-      const win = masterWordsNorm.slice(i, i + 5).join(' ');
-      const sim = stringSimilarity.compareTwoStrings(normSnipHead, win);
-      if (sim > bestSim) { bestSim = sim; bestIndex = i; }
-   }
-   return { bestIndex, bestSim };
+  const normSnipHead = normSnipHeadArr.join(' ');
+  let bestSim = -1, bestIndex = 0;
+  // Jump by 2 words for speed across the entire document
+  for (let i = 0; i <= masterWordsNorm.length - 5; i += 2) {
+    const win = masterWordsNorm.slice(i, i + 5).join(' ');
+    const sim = stringSimilarity.compareTwoStrings(normSnipHead, win);
+    if (sim > bestSim) { bestSim = sim; bestIndex = i; }
+  }
+  return { bestIndex, bestSim };
 }
 
 function mapSnippet(snippet, currentAnchorIndex) {
@@ -139,18 +139,18 @@ function mapSnippet(snippet, currentAnchorIndex) {
   const snippetLen = snippetArr.length;
 
   if (snippetLen < 5) {
-      return { score: 0, mappedText: "<Fragment Too Small>", context: "", newAnchor: currentAnchorIndex };
+    return { score: 0, mappedText: "<Fragment Too Small>", context: "", newAnchor: currentAnchorIndex };
   }
 
   // 1. Defind Chronological Local Search Window
   let windowStart = Math.max(0, currentAnchorIndex - 30); // Slight overlap backward
-  let windowEnd = Math.min(masterWordsNorm.length, currentAnchorIndex + 600); 
+  let windowEnd = Math.min(masterWordsNorm.length, currentAnchorIndex + 600);
 
   // 2. Find Head Anchor inside Local Window
   let normSnipHeadArr = snippetArr.slice(0, 5);
   let normSnipHead = normSnipHeadArr.join(' ');
   let bestHeadSim = -1, bestHeadIndex = windowStart;
-  
+
   for (let i = windowStart; i <= windowEnd - 5; i++) {
     const win = masterWordsNorm.slice(i, i + 5).join(' ');
     const sim = stringSimilarity.compareTwoStrings(normSnipHead, win);
@@ -159,14 +159,14 @@ function mapSnippet(snippet, currentAnchorIndex) {
 
   // 3. Fallback to Global if Local is completely lost (e.g. user skipped 10 audio files)
   if (bestHeadSim < 0.40) {
-      process.stdout.write('💫 (Global Recenter) ');
-      const global = findGlobalHead(normSnipHeadArr);
-      if (global.bestSim > 0.50) {
-          bestHeadSim = global.bestSim;
-          bestHeadIndex = global.bestIndex;
-          windowStart = Math.max(0, bestHeadIndex - 10);
-          windowEnd = Math.min(masterWordsNorm.length, bestHeadIndex + 600);
-      }
+    process.stdout.write('💫 (Global Recenter) ');
+    const global = findGlobalHead(normSnipHeadArr);
+    if (global.bestSim > 0.50) {
+      bestHeadSim = global.bestSim;
+      bestHeadIndex = global.bestIndex;
+      windowStart = Math.max(0, bestHeadIndex - 10);
+      windowEnd = Math.min(masterWordsNorm.length, bestHeadIndex + 600);
+    }
   }
 
   // 4. Elastic Expansion (Slide from Head to Tail)
@@ -180,29 +180,29 @@ function mapSnippet(snippet, currentAnchorIndex) {
   let bestScore = -1;
   let bestRawText = "";
   let bestContextText = "";
-  let bestMappingIndex = currentAnchorIndex; 
+  let bestMappingIndex = currentAnchorIndex;
 
   for (let size = minLen; size <= maxLen; size++) {
     for (let i = iMin; i <= iMax; i++) {
       if (i + size > masterWordsNorm.length) continue;
-      
+
       const windowNormWords = masterWordsNorm.slice(i, i + size);
       const normWin = windowNormWords.join(' ');
-      
+
       const algorithmRawScore = scoreChunkVerbose(normSnippet, normWin, snippetArr);
 
       // Distance Penalty to discourage roaming away from the discovered head anchor
       const distancePenalty = Math.abs(i - bestHeadIndex) * 0.05;
       const totalWinScore = algorithmRawScore - distancePenalty;
-      
+
       if (totalWinScore > bestScore) {
         bestScore = totalWinScore;
         bestRawText = masterWordsRaw.slice(i, i + size).join(' ');
-        
+
         const ctxStart = Math.max(0, i - 15);
         const ctxEnd = Math.min(masterWordsRaw.length, i + size + 15);
         bestContextText = masterWordsRaw.slice(ctxStart, ctxEnd).join(' ');
-        
+
         bestMappingIndex = i;
       }
     }
@@ -210,12 +210,12 @@ function mapSnippet(snippet, currentAnchorIndex) {
 
   // 5. Hard Global Recovery: If score is absolutely terrible, the Head we found was likely an ASR hallucination or irrelevant repetition.
   if (bestScore < 0.24) {
-      process.stdout.write('🚑(Global) ');
-      const global = findGlobalHead(normSnipHeadArr);
-      if (global.bestSim > 0.50 && Math.abs(global.bestIndex - currentAnchorIndex) > 100) {
-          // Recurse with the new global anchor exactly once
-          return mapSnippet(snippet, Math.max(0, global.bestIndex - 10)); 
-      }
+    process.stdout.write('🚑(Global) ');
+    const global = findGlobalHead(normSnipHeadArr);
+    if (global.bestSim > 0.50 && Math.abs(global.bestIndex - currentAnchorIndex) > 100) {
+      // Recurse with the new global anchor exactly once
+      return mapSnippet(snippet, Math.max(0, global.bestIndex - 10));
+    }
   }
 
   // Do not advance anchor timeline if confidence is horrible (prevents wandering off track)
@@ -257,21 +257,21 @@ function mapSnippet(snippet, currentAnchorIndex) {
       if (!data.taskID || !data.rawSnippet) continue;
 
       const snippet = data.rawSnippet;
-      
+
       if (currentAnchorIndex === -1) {
-          const headArr = normalize(snippet).split(/\s+/).slice(0, 5);
-          const global = findGlobalHead(headArr);
-          if (global.bestSim > 0.50) {
-              currentAnchorIndex = Math.max(0, global.bestIndex - 20);
-              console.log(`📍 Session anchored dynamically near word index ${global.bestIndex}`);
-          } else {
-              currentAnchorIndex = 0;
-          }
+        const headArr = normalize(snippet).split(/\s+/).slice(0, 5);
+        const global = findGlobalHead(headArr);
+        if (global.bestSim > 0.50) {
+          currentAnchorIndex = Math.max(0, global.bestIndex - 20);
+          console.log(`📍 Session anchored dynamically near word index ${global.bestIndex}`);
+        } else {
+          currentAnchorIndex = 0;
+        }
       }
 
       process.stdout.write(`Task ${data.taskID} `); // Progress dot
       const result = mapSnippet(snippet, currentAnchorIndex);
-      
+
       // Update our sliding timeline pointer
       currentAnchorIndex = result.newAnchor;
       process.stdout.write(`✓\n`);
@@ -294,7 +294,7 @@ function mapSnippet(snippet, currentAnchorIndex) {
       outputLines.push(`CTX : ... ${result.context.replace(/\n/g, ' ')} ...`);
       outputLines.push(`--------------------------------------------------\n`);
 
-    } catch (e) {}
+    } catch (e) { }
   }
 
   const outPath = path.join(__dirname, `review_${CONFIG.PROJECT_ID}.txt`);

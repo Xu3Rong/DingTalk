@@ -12,7 +12,7 @@ const path = require('path');
 
 // ─── 0. SYSTEM CONFIG ────────────────────────────────────────────────────────
 const CONFIG = {
-  PROJECT_ID: '39649',
+  PROJECT_ID: '42652',
   get PROJECT_URL() { return `https://scale.dingtalk.com/projects/${this.PROJECT_ID}/data`; },
   CDP_URL: 'http://127.0.0.1:9222',
   POLL_INTERVAL_MS: 1500,
@@ -62,19 +62,17 @@ async function scrollToTop(page, selector) {
   }, selector);
 }
 
-async function smoothScroll(page, selector, pixels) {
-  await page.evaluate(async ({ selector, pixels }) => {
-    const el = document.querySelector(selector);
+async function quickOverlapScroll(page, selector) {
+  await page.evaluate((sel) => {
+    const el = document.querySelector(sel);
     if (!el) return;
-    const direction = pixels > 0 ? 1 : -1;
-    let remaining = Math.abs(pixels);
-    while (remaining > 0) {
-      const step = Math.min(remaining, Math.floor(Math.random() * 50) + 50);
-      el.scrollTop += step * direction;
-      remaining -= step;
-      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 20) + 15));
-    }
-  }, { selector, pixels });
+    
+    // Halved the jump distance for a much smaller, stabler overlap
+    const jumpDistance = Math.max(100, Math.floor(el.clientHeight / 2));
+    
+    // Instant jump exactly like `jump_first.js` to avoid React lag/stuttering!
+    el.scrollTop += jumpDistance;
+  }, selector);
 }
 
 async function getVerifiedTaskID(page) {
@@ -136,10 +134,52 @@ async function readTextarea(page) {
   while (true) {
     try {
       await sleep(CONFIG.POLL_INTERVAL_MS);
-      const rows = await page.locator('.lsf-table-row').all();
       let processed = false;
+      let targetTaskID = null;
 
-      for (const row of rows) {
+      // ─── LADDER CRAWLER (QUICK SIBLING JUMP) ───
+      // Since preflight.js never Submits, DingTalk never automatically cycles to the next task.
+      // This explicitly locates the exact adjacent DOM node beneath the currently open task.
+      const activeSelected = page.locator('.lsf-table__row-wrapper_selected').first();
+      if (await activeSelected.isVisible().catch(() => false)) {
+        const nextWrapper = page.locator('.lsf-table__row-wrapper_selected + .lsf-table__row-wrapper').first();
+        if (await nextWrapper.isVisible().catch(() => false)) {
+          const nextRow = nextWrapper.locator('.lsf-table-row').first();
+          const pCells = await nextRow.locator('.lsf-table__cell').all();
+          
+          if (pCells.length >= 2) {
+             const cell1 = await pCells[1].innerText().catch(() => '');
+             const cell2 = pCells.length > 2 ? await pCells[2].innerText().catch(() => '') : '';
+             
+             if (cell1.trim() === '0' || cell2.trim() === '0') {
+               const checkbox = nextRow.locator('.lsf-select-row input, input[aria-label^="Select Task"]').first();
+               const ariaLabel = await checkbox.getAttribute('aria-label').catch(() => '');
+               let taskID = ariaLabel ? ariaLabel.replace('Select Task ', '').trim() : 'Unknown';
+
+               if (!sweepHistory.has(taskID) && taskID !== lastTaskID) {
+                 log(`\n🪜 Climbing natively to next valid sibling (Task ${taskID})...`);
+                 
+                 // Precisely click the "0" cell, NEVER the whole row, because the row's center is the audio player!
+                 if (cell1.trim() === '0') await pCells[1].dblclick({ force: true }).catch(() => {});
+                 else if (cell2.trim() === '0') await pCells[2].dblclick({ force: true }).catch(() => {});
+                 else await nextRow.dblclick({ force: true }).catch(() => {});
+                 
+                 await page.evaluate(() => window.getSelection().removeAllRanges()).catch(() => { });
+                 targetTaskID = taskID;
+                 processed = true;
+               }
+             }
+          }
+        }
+      }
+
+      // ─── FALLBACK SCANNER ───
+      if (!processed) {
+        const rows = await page.locator('.lsf-table-row').all();
+
+        for (let i = 0; i < rows.length; i++) {
+          const row = rows[i];
+          if (processed) break;
         const cells = await row.locator('.lsf-table__cell').all();
         if (cells.length < 2) continue;
 
@@ -158,41 +198,63 @@ async function readTextarea(page) {
         const isZeroRow = col1 === '0' || col2 === '0' || col10 === '0';
         if (!isZeroRow) continue;
 
+        // Extract ID FIRST!
         const checkbox = row.locator('.lsf-select-row input, input[aria-label^="Select Task"]').first();
         const ariaLabel = await checkbox.getAttribute('aria-label').catch(() => '');
         let originalTaskID = ariaLabel ? ariaLabel.replace('Select Task ', '').trim() : 'Unknown';
         let taskID = originalTaskID;
 
-        // History check
-        if (sweepHistory.has(taskID)) continue;
+        // History check instantly so we don't hover and auto-scroll past lazy-loaded tasks
+        if (sweepHistory.has(taskID) || taskID === lastTaskID) continue;
 
-        if (taskID !== lastTaskID) {
-          log(`\n🕵️ Auditing Task ${taskID}... [col1='${col1}' col2='${col2}' col10='${col10}']`);
+        // --- PRE-AIM & DOM STABILITY FIX ---
+        await row.hover({ force: true }).catch(() => { });
+        await sleep(350, 650);
 
-          // Humanised Start
-          await row.hover({ force: true }).catch(() => { });
-          await sleep(200, 400);
+        // Verify the data stabilized.
+        const stableCol1 = (await cells[1].innerText().catch(() => '')).trim();
+        const stableCol2 = cells.length > 2 ? (await cells[2].innerText().catch(() => '')).trim() : '';
+        let stableCol10 = '';
+        if (cells.length > 5) {
+            const countCell = row.locator('div:nth-child(10) > div');
+            if (await countCell.isVisible().catch(() => false)) {
+                stableCol10 = (await countCell.innerText().catch(() => '')).trim();
+            }
+        }
 
-          // Open Task (Identical Cell Click logic to ok.js)
-          if (col1 === '0') await cells[1].dblclick({ force: true });
-          else if (col2 === '0') await cells[2].dblclick({ force: true });
-          else await row.dblclick({ force: true });
+        const isStableZero = stableCol1 === '0' || stableCol2 === '0' || stableCol10 === '0';
+        if (!isStableZero) continue;
 
-          await page.evaluate(() => window.getSelection().removeAllRanges()).catch(() => { });
+        // Open Task (Identical Cell Click logic to ok.js)
+        if (stableCol1 === '0') await cells[1].dblclick({ force: true });
+        else if (stableCol2 === '0') await cells[2].dblclick({ force: true });
+        else await row.dblclick({ force: true });
 
-          // Wait for UI
+        await page.evaluate(() => window.getSelection().removeAllRanges()).catch(() => { });
+
+        targetTaskID = taskID;
+        processed = true;
+        break; // Break the fallback scanner loop, let the unified processor handle it
+      }
+      } // End Fallback scanner
+
+      // ─── UNIFIED TASK PROCESSOR ───
+      if (processed && targetTaskID) {
+          log(`\n🕵️ Auditing Task ${targetTaskID}...`);
+
+          // Wait for UI to populate the audio workspace
           await page.waitForSelector('#waveform-layer-main', { timeout: 15000 }).catch(() => { });
 
           // --- VERIFY ID (The "Absolute Truth" fix) ---
           const verifiedID = await getVerifiedTaskID(page);
-          if (verifiedID && verifiedID !== taskID) {
-            log(`   ⚠️ ID MISMATCH! Table said ${taskID}, but UI/URL confirms ${verifiedID}. Correcting...`);
-            sweepHistory.add(taskID); // Block the "Wrong" ID from the table row
-            taskID = verifiedID; // Update to the real ID
+          if (verifiedID && verifiedID !== targetTaskID) {
+            log(`   ⚠️ ID MISMATCH! Table said ${targetTaskID}, but UI/URL confirms ${verifiedID}. Correcting...`);
+            sweepHistory.add(targetTaskID); // Block the "Wrong" ID from the table row
+            targetTaskID = verifiedID; // Update to the real ID
           }
-          lastTaskID = taskID;
-          sweepHistory.add(taskID); // Block the "Verified" ID
-          
+          lastTaskID = targetTaskID;
+          sweepHistory.add(targetTaskID); // Block the "Verified" ID
+
           log("   ⏳ Polling audio metadata...");
           const durationInput = page.locator('[data-testid="timebox-end-time"] input').first();
           let rawDur = "";
@@ -207,27 +269,23 @@ async function readTextarea(page) {
           log(`   🖱️ Audio duration confirmed [${rawDur.trim() || 'None'}]. Clicking waveform...`);
           await page.click('#waveform-layer-main').catch(() => { });
           await sleep(1000, 1500);
-          
+
           const snippet = await readTextarea(page);
 
           if (snippet && snippet.length > 5) {
-            log(`   ✅ Extractions recorded.`, { event: "extraction_collected", taskID, rawSnippet: snippet });
+            log(`   ✅ Extractions recorded.`, { event: "extraction_collected", taskID: targetTaskID, rawSnippet: snippet });
             const readPause = Math.floor(Math.random() * 800) + 1200;
-            log(`   🤔 Scanned for ${(readPause/1000).toFixed(1)}s`);
+            log(`   🤔 Scanned for ${(readPause / 1000).toFixed(1)}s`);
             await sleep(readPause);
           } else {
             log(`   ⚠ Empty snippet.`);
           }
 
-          // --- FAST EXIT (ESCAPE) ---
-          log(`   🔙 Returning to table (Escape)...`);
-          await page.keyboard.press('Escape').catch(() => { });
-          await sleep(1200, 1800); // Wait for modal to close
+          // --- FAST EXIT (STAY IN SPLIT PANE) ---
+          log(`   ⏩ Audit complete. Staying in split-pane view to directly load next task from sidebar...`);
+          await sleep(500, 800); // Tiny buffer for DingTalk data cleanup
 
-          processed = true;
           isVerifying = false;
-          break; // Return to while(true) to re-poll rows
-        }
       }
 
       if (!processed) {
@@ -244,8 +302,8 @@ async function readTextarea(page) {
           }
         } else {
           log(`   🔍 Scanning... [History: ${sweepHistory.size}]`);
-          await smoothScroll(page, TABLE_SCROLLER, 1000);
-          await sleep(1000, 2000);
+          await quickOverlapScroll(page, TABLE_SCROLLER); // Instant, perfectly overlapped jump
+          await sleep(600, 1000); // Shorter wait since the jump is instant
         }
       }
     } catch (e) {
