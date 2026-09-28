@@ -2,6 +2,8 @@
 
 A hardened, human-like automation tool for processing tasks on the DingTalk Scale platform. This suite is designed for 100% accuracy, stealth, and autonomous operation.
 
+This is whole thing is made by ai, they paidme, hence i just made it public, anyone can use this to helps out their side gig, its not polished, goodluck.
+
 ---
 
 ## 🚀 One-Time Installation
